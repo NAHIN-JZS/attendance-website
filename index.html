@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12233d">
+<title>Class attendance</title>
+
+<script>
+/* ------------------------------------------------------------------ *
+ *  PASTE YOUR APPS SCRIPT WEB APP URL BETWEEN THE QUOTES BELOW.
+ *  It looks like: https://script.google.com/macros/s/AKfy..../exec
+ * ------------------------------------------------------------------ */
+const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uArzrxGAudgWbbSjqLN8PLckGSOqg4AwH2Mt2C7O-p/exec";
+
+/*  Shown in the header — change to whatever you like. */
+const HEADER_TITLE = "Attendance";
+const HEADER_SUB   = "Department of CSE";
+
+/*  Students below this percentage are flagged in the summary. */
+const PASS_MARK = 75;
+
+/*  How many class slots a single day can have. */
+const CLASSES_PER_DAY = 4;
+</script>
+
+<style>
+:root{
+  --ink:#12233d; --ink-2:#33455f; --muted:#6b7a90;
+  --paper:#fff; --wash:#f2f5f9; --line:#dde3ec;
+  --p:#0f7a4d; --p-bg:#e4f4ea;
+  --l:#a4620b; --l-bg:#fcefda;
+  --a:#b32a45; --a-bg:#fbe6ea;
+  --mono:ui-monospace,"SF Mono",Menlo,"Roboto Mono","DejaVu Sans Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:var(--sans);background:var(--wash);color:var(--ink);
+  -webkit-text-size-adjust:100%;padding-bottom:24px}
+body.marking{padding-bottom:96px}
+.wrap{max-width:720px;margin:0 auto;padding:0 14px}
+
+/* header + tabs */
+header{background:var(--ink);color:#fff;padding:18px 0 0}
+.brand{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brand h1{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em}
+.brand span{font-size:12.5px;color:#9db0cb;letter-spacing:.02em}
+.tabs{display:flex;gap:20px;margin-top:14px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{font:inherit;font-size:14px;font-weight:600;white-space:nowrap;background:0;
+  border:0;color:#9db0cb;padding:0 0 10px;border-bottom:2px solid transparent;cursor:pointer}
+.tabs button[aria-selected="true"]{color:#fff;border-bottom-color:#fff}
+
+/* cards + fields */
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;
+  padding:14px;margin-top:14px}
+.fields{display:grid;gap:10px;grid-template-columns:1fr 1fr}
+.fields.one{grid-template-columns:1fr}
+.fields.three{grid-template-columns:1fr 140px 110px}
+.fields.add{grid-template-columns:130px 1fr auto;align-items:end}
+@media (max-width:560px){
+  .fields.three{grid-template-columns:1fr 1fr}
+  .fields.three>div:first-child{grid-column:1/-1}
+  .fields.add{grid-template-columns:1fr 1fr}
+  .fields.add>div:nth-child(2){grid-column:1/-1}
+}
+label{display:block;font-size:11.5px;font-weight:650;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+select,input{width:100%;font:inherit;font-size:15px;padding:9px 10px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-radius:8px}
+select:focus-visible,input:focus-visible,button:focus-visible{
+  outline:2px solid var(--ink);outline-offset:2px}
+.tools{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+.ghost{font:inherit;font-size:13.5px;font-weight:600;white-space:nowrap;
+  padding:9px 12px;border-radius:8px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink-2);cursor:pointer}
+.ghost:hover{background:var(--wash)}
+.ghost.danger{color:var(--a);border-color:#eebfc8}
+.ghost.danger:hover{background:var(--a-bg)}
+.ghost:disabled{opacity:.45;cursor:default}
+.check{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--ink-2);
+  cursor:pointer;user-select:none}
+.check input{width:auto;margin:0}
+
+/* shared list */
+ul{list-style:none;margin:14px 0 0;padding:0;background:var(--paper);
+  border:1px solid var(--line);border-radius:12px;overflow:hidden}
+li{display:flex;align-items:center;gap:12px;padding:9px 12px;
+  border-top:1px solid var(--line);border-left:4px solid transparent}
+li:first-child{border-top:0}
+li.hide{display:none}
+li[data-s="P"]{border-left-color:var(--p)}
+li[data-s="L"]{border-left-color:var(--l);background:var(--l-bg)}
+li[data-s="A"]{border-left-color:var(--a);background:var(--a-bg)}
+li.tap{cursor:pointer}
+li.tap:hover{background:var(--wash)}
+li.busy{opacity:.5}
+.roll{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:16px;
+  font-weight:600;letter-spacing:-.02em;min-width:4.5em}
+.name{flex:1;font-size:14.5px;line-height:1.3;min-width:0}
+.name em{display:block;font-style:normal;font-size:11.5px;color:var(--muted);
+  margin-top:2px;font-variant-numeric:tabular-nums}
+.when{flex:1;font-size:14.5px;font-variant-numeric:tabular-nums}
+.when em{display:block;font-style:normal;font-size:11.5px;color:var(--muted);margin-top:2px}
+
+/* P / L / A switch */
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-shrink:0}
+.seg button{font:inherit;font-size:13px;font-weight:700;width:38px;height:36px;border:0;
+  border-left:1px solid var(--line);background:var(--paper);color:var(--muted);cursor:pointer}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"][data-v="P"]{background:var(--p);color:#fff}
+.seg button[aria-pressed="true"][data-v="L"]{background:var(--l);color:#fff}
+.seg button[aria-pressed="true"][data-v="A"]{background:var(--a);color:#fff}
+
+/* summary rows */
+li.srow[data-low="1"]{border-left-color:var(--a)}
+.pct{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:17px;
+  font-weight:700;min-width:3.4em;text-align:right}
+li.srow[data-low="1"] .pct{color:var(--a)}
+.meter{display:block;height:3px;border-radius:2px;background:var(--line);margin-top:5px}
+.meter i{display:block;height:100%;border-radius:2px;background:var(--p)}
+li.srow[data-low="1"] .meter i{background:var(--a)}
+.chev{color:var(--muted);font-size:18px;line-height:1}
+.gone{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted);background:var(--wash);padding:3px 7px;border-radius:5px;margin-left:6px}
+
+/* pills + group headings */
+.pill{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  padding:4px 9px;border-radius:999px;flex-shrink:0;background:var(--wash);color:var(--muted)}
+.pill.P{background:var(--p-bg);color:var(--p)}
+.pill.L{background:var(--l-bg);color:var(--l)}
+.pill.A{background:var(--a-bg);color:var(--a)}
+.grouphead{display:block;padding:9px 12px;background:var(--wash);font-size:11.5px;
+  font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  border-top:1px solid var(--line)}
+
+/* student detail banner */
+.who{background:var(--ink);color:#fff;border-radius:12px;padding:14px;margin-top:14px;
+  display:flex;align-items:center;gap:14px}
+.who .roll,.who .name{color:#fff}
+.who .name em{color:#9db0cb}
+.who .pct{font-size:26px}
+
+/* sticky tally */
+footer{position:fixed;left:0;right:0;bottom:0;background:var(--paper);
+  border-top:1px solid var(--line);padding:10px 0 max(10px,env(safe-area-inset-bottom))}
+footer[hidden]{display:none}
+.bar{display:flex;align-items:center;gap:12px}
+.tally{flex:1;font-size:13.5px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.tally b{font-weight:700}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.save{font:inherit;font-size:15px;font-weight:650;padding:12px 22px;border:0;
+  border-radius:9px;background:var(--ink);color:#fff;cursor:pointer}
+.save:disabled{opacity:.45;cursor:default}
+
+/* messages */
+.msg{margin-top:14px;padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;
+  border:1px solid var(--line);background:var(--paper)}
+.msg.good{border-color:#b9dfc9;background:var(--p-bg);color:var(--p)}
+.msg.bad{border-color:#eebfc8;background:var(--a-bg);color:var(--a)}
+.msg code{font-family:var(--mono);font-size:13px}
+.empty{padding:26px 14px;text-align:center;color:var(--muted);font-size:14px;
+  display:block;border-left:0}
+.headline{margin:14px 0 0;font-size:13.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+[hidden]{display:none !important}
+@media (prefers-reduced-motion:no-preference){
+  .seg button{transition:background .12s ease,color .12s ease}
+  li{transition:opacity .12s ease}
+}
+</style>
+</head>
+<body class="marking">
+
+<header>
+  <div class="wrap">
+    <div class="brand"><h1 id="ttl">Attendance</h1><span id="sub"></span></div>
+    <div class="tabs" role="tablist">
+      <button id="tab-mark"    role="tab" aria-selected="true">Take attendance</button>
+      <button id="tab-term"    role="tab" aria-selected="false">Whole term</button>
+      <button id="tab-class"   role="tab" aria-selected="false">One class</button>
+      <button id="tab-student" role="tab" aria-selected="false">One student</button>
+      <button id="tab-roll"    role="tab" aria-selected="false">Students</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="card">
+    <div class="fields one">
+      <div>
+        <label for="course">Course</label>
+        <select id="course"><option>Loading…</option></select>
+      </div>
+    </div>
+
+    <!-- take attendance -->
+    <div id="ctl-mark">
+      <div class="fields three" style="margin-top:10px">
+        <div>
+          <label for="find">Find</label>
+          <input type="search" id="find" placeholder="Roll or name" autocomplete="off">
+        </div>
+        <div>
+          <label for="date">Date</label>
+          <input type="date" id="date">
+        </div>
+        <div>
+          <label for="cls">Class</label>
+          <select id="cls"></select>
+        </div>
+      </div>
+      <div class="tools"><button class="ghost" id="allP">Mark everyone present</button></div>
+    </div>
+
+    <!-- whole term -->
+    <div id="ctl-term" hidden>
+      <div class="tools" style="justify-content:space-between">
+        <label class="check"><input type="checkbox" id="lateOk" checked> Count late as present</label>
+        <button class="ghost" id="csv">Download CSV</button>
+      </div>
+    </div>
+
+    <!-- one class -->
+    <div id="ctl-class" hidden>
+      <div class="fields one" style="margin-top:10px">
+        <div>
+          <label for="picksession">Class</label>
+          <select id="picksession"></select>
+        </div>
+      </div>
+      <div class="tools" style="justify-content:space-between">
+        <span style="font-size:13px;color:var(--muted)">Tap P / L / A to correct a mark.</span>
+        <button class="ghost danger" id="delsession">Delete this class</button>
+      </div>
+    </div>
+
+    <!-- one student -->
+    <div id="ctl-student" hidden>
+      <div class="fields one" style="margin-top:10px">
+        <div>
+          <label for="sfind">Student</label>
+          <input type="search" id="sfind" placeholder="Search a roll or name" autocomplete="off">
+        </div>
+      </div>
+      <div class="tools" id="backrow" hidden>
+        <button class="ghost" id="back">← All students</button>
+      </div>
+    </div>
+
+    <!-- students on the roll -->
+    <div id="ctl-roll" hidden>
+      <div class="fields add" style="margin-top:10px">
+        <div>
+          <label for="newroll">Roll</label>
+          <input id="newroll" placeholder="210103" autocomplete="off">
+        </div>
+        <div>
+          <label for="newname">Name</label>
+          <input id="newname" placeholder="Full name" autocomplete="off">
+        </div>
+        <div><button class="ghost" id="addstu">Add to roll</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="note"></div>
+  <div id="banner"></div>
+  <p class="headline" id="headline"></p>
+  <ul id="list"></ul>
+</main>
+
+<footer id="foot">
+  <div class="wrap bar">
+    <div class="tally" id="tally">No students loaded</div>
+    <button class="save" id="save" disabled>Save</button>
+  </div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const S = { courses: [], students: [], roster: [], marks: {},
+            history: null, view: 'mark', picked: null, busy: false };
+const FULL = { P: 'Present', L: 'Late', A: 'Absent' };
+const VIEWS = ['mark','term','class','student','roll'];
+
+$('ttl').textContent = HEADER_TITLE;
+$('sub').textContent = HEADER_SUB;
+$('date').value = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
+$('cls').innerHTML = Array.from({ length: CLASSES_PER_DAY },
+  (_, i) => `<option value="${i+1}">Class ${i+1}</option>`).join('');
+
+const note = (t,k) => $('note').innerHTML = t ? `<div class="msg ${k||''}">${t}</div>` : '';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const remember = (k,v) => { try{ localStorage.setItem(k,v); }catch(e){} };
+const recall   = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+const forget   = k => { try{ localStorage.removeItem(k); }catch(e){} };
+const byRoll   = (a,b) => a.roll.localeCompare(b.roll, undefined, { numeric:true });
+const course   = () => S.courses[$('course').value];
+const nameFor  = roll => {
+  const s = S.roster.find(x => x.roll === roll);
+  return (s && s.name) || (S.history && S.history.names[roll]) || '';
+};
+
+/* ---------- one door to the sheet for every write -------------------- */
+async function post(action, extra) {
+  let pin = recall('pin');
+  if (pin === null) { pin = prompt('PIN (leave blank if you did not set one):') || ''; remember('pin', pin); }
+  const res = await fetch(API, {
+    // text/plain keeps this a simple request, so the browser skips preflight
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ action, pin }, extra))
+  });
+  const data = await res.json();
+  if (!data.ok && /PIN/i.test(data.error || '')) forget('pin');
+  return data;
+}
+
+/** Course identity, sent with every attendance write. */
+const where = () => {
+  const c = course();
+  return { courseCode: c.code, courseTitle: c.title, section: c.section };
+};
+
+/* ---------- load courses + students ---------------------------------- */
+async function load(keepMarks) {
+  if (API.indexOf('PASTE_') === 0) {
+    note('Open <code>index.html</code> and paste your Apps Script web app URL into the <code>API</code> line near the top.', 'bad');
+    $('course').innerHTML = '<option>Not connected</option>';
+    return;
+  }
+  try {
+    const data = await (await fetch(API)).json();
+    if (!data.ok) throw new Error(data.error);
+    S.courses = data.courses;
+    S.students = data.students;
+
+    if (!S.courses.length) note('No courses yet. Add a row to the <b>Courses</b> sheet, then reload.', 'bad');
+    const chosen = $('course').value;
+    $('course').innerHTML = S.courses
+      .map((c,i) => `<option value="${i}">${esc(c.code)} — ${esc(c.title)} · ${esc(c.section)}</option>`)
+      .join('') || '<option>No courses</option>';
+
+    const last = keepMarks ? chosen : recall('course');
+    if (last !== null && S.courses[last]) $('course').value = last;
+    keepMarks ? rebuildRoster() : pickCourse();
+  } catch (err) {
+    note('Could not reach the sheet. Check that the web app is deployed with access set to <b>Anyone</b>.<br><code>' + esc(err.message) + '</code>', 'bad');
+  }
+}
+
+function pickCourse() {
+  const c = course();
+  if (!c) return;
+  remember('course', $('course').value);
+  S.history = null;
+  S.picked = null;
+  rebuildRoster();
+}
+
+/** Refresh the roster, keeping any marks already made for students who remain. */
+function rebuildRoster() {
+  const c = course();
+  if (!c) return;
+  S.roster = S.students.filter(s => s.section === c.section).sort(byRoll);
+  const kept = {};
+  S.roster.forEach(s => kept[s.roll] = S.marks[s.roll] || 'P');
+  S.marks = kept;
+  render();
+}
+
+/* ---------- view switching ------------------------------------------- */
+function show(view) {
+  S.view = view;
+  VIEWS.forEach(v => {
+    $('tab-'+v).setAttribute('aria-selected', v === view);
+    $('ctl-'+v).hidden = v !== view;
+  });
+  $('foot').hidden = view !== 'mark';
+  document.body.classList.toggle('marking', view === 'mark');
+  note('');
+  render();
+}
+VIEWS.forEach(v => $('tab-'+v).addEventListener('click', () => show(v)));
+
+function render() {
+  $('banner').innerHTML = '';
+  if (S.view === 'mark') return drawRoster();
+  if (S.view === 'roll') return drawRoll();
+  if (!S.history) return loadHistory();
+  if (S.view === 'term') return drawTerm();
+  if (S.view === 'class') return drawSession();
+  return drawStudent();
+}
+
+/* ---------- 1. take attendance ---------------------------------------- */
+function drawRoster() {
+  $('headline').textContent = '';
+  if (!S.roster.length) {
+    $('list').innerHTML = '<li class="empty">Nobody on this roll yet. Add students on the Students tab.</li>';
+    $('save').disabled = true; tally(); return;
+  }
+  $('list').innerHTML = S.roster.map(s => `
+    <li data-s="${S.marks[s.roll]}" data-key="${esc((s.roll+' '+s.name).toLowerCase())}">
+      <span class="roll">${esc(s.roll)}</span>
+      <span class="name">${esc(s.name)}</span>
+      ${seg(s.roll, S.marks[s.roll])}</li>`).join('');
+  $('save').disabled = false;
+  filter(); tally();
+}
+
+/** The P / L / A control. Pass a session key to make it edit the sheet directly. */
+function seg(roll, current, key) {
+  return '<span class="seg">' + ['P','L','A'].map(v =>
+    `<button data-v="${v}" data-roll="${esc(roll)}"${key ? ` data-key="${esc(key)}"` : ''}` +
+    ` aria-pressed="${current===v}" aria-label="${FULL[v]} ${esc(roll)}">${v}</button>`).join('') + '</span>';
+}
+
+function tally() {
+  const n = { P:0, L:0, A:0 };
+  S.roster.forEach(s => n[S.marks[s.roll]]++);
+  $('tally').innerHTML = S.roster.length
+    ? `<span class="dot" style="background:var(--p)"></span><b>${n.P}</b> present &nbsp;
+       <span class="dot" style="background:var(--l)"></span><b>${n.L}</b> late &nbsp;
+       <span class="dot" style="background:var(--a)"></span><b>${n.A}</b> absent`
+    : 'No students loaded';
+}
+
+function filter() {
+  const q = $('find').value.trim().toLowerCase();
+  document.querySelectorAll('#list li[data-key]').forEach(li =>
+    li.classList.toggle('hide', !!q && li.dataset.key.indexOf(q) === -1));
+}
+
+$('course').addEventListener('change', pickCourse);
+$('find').addEventListener('input', filter);
+$('allP').addEventListener('click', () => { S.roster.forEach(s => S.marks[s.roll]='P'); drawRoster(); });
+
+/* ---------- history --------------------------------------------------- */
+async function loadHistory() {
+  const c = course();
+  if (!c) return;
+  $('list').innerHTML = '<li class="empty">Reading the sheet…</li>';
+  $('headline').textContent = '';
+  try {
+    const url = API + '?action=history&course=' + encodeURIComponent(c.code) +
+                '&section=' + encodeURIComponent(c.section);
+    const data = await (await fetch(url)).json();
+    if (!data.ok) throw new Error(data.error);
+    S.history = data;
+    const chosen = $('picksession').value;
+    $('picksession').innerHTML = data.sessions.slice().reverse()
+      .map(s => `<option value="${s.key}">${esc(sessionLabel(s))}</option>`).join('');
+    if (data.sessions.some(s => s.key === chosen)) $('picksession').value = chosen;
+    render();
+  } catch (err) {
+    S.history = null;
+    $('list').innerHTML = '';
+    note('Could not read past records.<br><code>' + esc(err.message) + '</code>', 'bad');
+  }
+}
+
+function prettyDate(d) {
+  const [y,m,day] = d.split('-');
+  return new Date(y, m-1, day).toLocaleDateString(undefined,
+    { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+}
+
+/** Show the class number only on days that actually had more than one class. */
+function sessionLabel(s) {
+  const same = S.history.sessions.filter(x => x.date === s.date).length;
+  return prettyDate(s.date) + (same > 1 ? ' · Class ' + s.cls : '');
+}
+
+function summarise() {
+  const h = S.history, lateOk = $('lateOk').checked;
+  const rolls = Object.keys(h.marks);
+  S.roster.forEach(s => { if (rolls.indexOf(s.roll) === -1) rolls.push(s.roll); });
+
+  return rolls.map(roll => {
+    const rec = h.marks[roll] || {};
+    const n = { P:0, L:0, A:0 };
+    h.sessions.forEach(s => { if (rec[s.key]) n[rec[s.key]]++; });
+    const held = n.P + n.L + n.A;
+    const credit = n.P + (lateOk ? n.L : 0);
+    const known = S.roster.find(s => s.roll === roll);
+    return { roll, name: (known && known.name) || h.names[roll] || '', onRoll: !!known,
+             ...n, held, pct: held ? Math.round(credit / held * 100) : 0 };
+  }).sort(byRoll);
+}
+
+/* ---------- 2. whole term --------------------------------------------- */
+function drawTerm() {
+  const h = S.history;
+  if (!h.sessions.length) {
+    $('headline').textContent = '';
+    $('list').innerHTML = '<li class="empty">Nothing recorded for this course yet.</li>';
+    return;
+  }
+  const rows = summarise();
+  const below = rows.filter(r => r.held && r.pct < PASS_MARK).length;
+  $('headline').innerHTML = `<b>${h.sessions.length}</b> classes held · <b>${rows.length}</b> students · ` +
+    (below ? `<b style="color:var(--a)">${below}</b> below ${PASS_MARK}%` : `everyone at or above ${PASS_MARK}%`);
+  $('list').innerHTML = rows.map(summaryRow).join('');
+}
+
+function summaryRow(r) {
+  return `<li class="srow tap" data-roll="${esc(r.roll)}" data-low="${r.held && r.pct < PASS_MARK ? 1 : 0}">
+      <span class="roll">${esc(r.roll)}</span>
+      <span class="name">${esc(r.name)}${r.onRoll ? '' : '<span class="gone">off roll</span>'}
+        <em>${r.held ? `${r.P} present · ${r.L} late · ${r.A} absent · of ${r.held}`
+                     : 'never marked in this course'}</em>
+        <span class="meter"><i style="width:${r.held ? r.pct : 0}%"></i></span>
+      </span>
+      <span class="pct">${r.held ? r.pct + '%' : '—'}</span>
+      <span class="chev">›</span>
+    </li>`;
+}
+
+$('lateOk').addEventListener('change', () => { if (S.view === 'term') drawTerm(); });
+
+$('csv').addEventListener('click', () => {
+  if (!S.history || !S.history.sessions.length) return;
+  const c = course(), h = S.history, rows = summarise();
+
+  const head = ['Roll','Name']
+    .concat(h.sessions.map(s => s.date + ' C' + s.cls))
+    .concat(['Present','Late','Absent','Classes','Percentage']);
+
+  const body = rows.map(r => {
+    const rec = h.marks[r.roll] || {};
+    return [r.roll, r.name]
+      .concat(h.sessions.map(s => rec[s.key] || ''))
+      .concat([r.P, r.L, r.A, r.held, r.held ? r.pct + '%' : '']);
+  });
+
+  const csv = [head].concat(body)
+    .map(l => l.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type:'text/csv' }));
+  a.download = `${c.code.replace(/\s+/g,'')}-${c.section}-attendance.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+/* ---------- 3. one class ---------------------------------------------- */
+function drawSession() {
+  const h = S.history, key = $('picksession').value;
+  $('delsession').disabled = !key;
+  if (!h.sessions.length || !key) {
+    $('headline').textContent = '';
+    $('list').innerHTML = '<li class="empty">Nothing recorded for this course yet.</li>';
+    return;
+  }
+  const groups = { A:[], L:[], P:[] };
+  Object.keys(h.marks).forEach(roll => {
+    const st = h.marks[roll][key];
+    if (st) groups[st].push({ roll, name: h.names[roll] || '' });
+  });
+
+  sessionCounts(key);
+
+  const block = (k, title) => !groups[k].length ? '' :
+    `<li class="grouphead">${title} — ${groups[k].length}</li>` +
+    groups[k].sort(byRoll).map(x => `
+      <li data-s="${k}">
+        <span class="roll">${esc(x.roll)}</span>
+        <span class="name">${esc(x.name)}</span>
+        ${seg(x.roll, k, key)}
+      </li>`).join('');
+
+  $('list').innerHTML = block('A','Absent') + block('L','Late') + block('P','Present');
+}
+
+/** Recount the headline from current marks — cheap enough to redo on every edit. */
+function sessionCounts(key) {
+  const h = S.history, n = { P:0, L:0, A:0 };
+  Object.keys(h.marks).forEach(roll => { const st = h.marks[roll][key]; if (st) n[st]++; });
+  const s = h.sessions.find(x => x.key === key);
+  const total = n.P + n.L + n.A;
+  $('headline').innerHTML = `${esc(sessionLabel(s))} · <b>${n.P}</b> present, ` +
+    `<b>${n.L}</b> late, <b style="color:var(--a)">${n.A}</b> absent of ${total}`;
+}
+
+$('picksession').addEventListener('change', drawSession);
+
+$('delsession').addEventListener('click', async () => {
+  const key = $('picksession').value;
+  const s = S.history && S.history.sessions.find(x => x.key === key);
+  if (!s) return;
+  if (!confirm(`Delete every mark for ${sessionLabel(s)}?\n\nThis removes the class from the sheet. It cannot be undone.`)) return;
+
+  $('delsession').disabled = true;
+  const data = await post('deleteSession', Object.assign(where(), { date: s.date, cls: s.cls }));
+  if (data.ok) {
+    S.history = null;
+    note(`Deleted ${data.deleted} marks. That class is gone from the sheet.`, 'good');
+    loadHistory();
+  } else {
+    $('delsession').disabled = false;
+    note(esc(data.error || 'Could not delete that class.'), 'bad');
+  }
+});
+
+/* ---------- 4. one student -------------------------------------------- */
+function drawStudent() {
+  const h = S.history;
+  $('backrow').hidden = !S.picked;
+
+  if (!h.sessions.length) {
+    $('headline').textContent = '';
+    $('list').innerHTML = '<li class="empty">Nothing recorded for this course yet.</li>';
+    return;
+  }
+  if (!S.picked) return drawStudentList();
+
+  const r = summarise().find(x => x.roll === S.picked);
+  if (!r) { S.picked = null; return drawStudentList(); }
+
+  $('banner').innerHTML = `<div class="who">
+      <span class="roll">${esc(r.roll)}</span>
+      <span class="name">${esc(r.name)}<em>${r.P} present · ${r.L} late · ${r.A} absent · of ${r.held} classes</em></span>
+      <span class="pct" style="color:${r.held && r.pct < PASS_MARK ? '#ff9db0' : '#8fe3b6'}">${r.held ? r.pct+'%' : '—'}</span>
+    </div>`;
+  $('headline').innerHTML = r.held && r.pct < PASS_MARK
+    ? `<b style="color:var(--a)">Below the ${PASS_MARK}% mark.</b> Tap P / L / A to correct any class.`
+    : 'Every class recorded for this course. Tap P / L / A to correct one.';
+
+  const rec = h.marks[r.roll] || {};
+  $('list').innerHTML = h.sessions.slice().reverse().map(s => `
+    <li data-s="${rec[s.key] || ''}">
+      <span class="when">${esc(prettyDate(s.date))}<em>Class ${esc(s.cls)}</em></span>
+      ${seg(r.roll, rec[s.key] || '', s.key)}
+    </li>`).join('');
+}
+
+function drawStudentList() {
+  $('banner').innerHTML = '';
+  const q = $('sfind').value.trim().toLowerCase();
+  const rows = summarise().filter(r =>
+    !q || (r.roll + ' ' + r.name).toLowerCase().indexOf(q) !== -1);
+
+  $('headline').innerHTML = q
+    ? `<b>${rows.length}</b> ${rows.length === 1 ? 'match' : 'matches'} — tap to see the full term`
+    : 'Search above, or tap any student to see their full term';
+  $('list').innerHTML = rows.length
+    ? rows.map(summaryRow).join('')
+    : '<li class="empty">Nobody matches that roll or name.</li>';
+}
+
+$('sfind').addEventListener('input', () => {
+  S.picked = null;
+  if (S.view === 'student' && S.history) drawStudent();
+});
+$('back').addEventListener('click', () => { S.picked = null; drawStudent(); });
+
+/* ---------- 5. students on the roll ----------------------------------- */
+function drawRoll() {
+  const c = course();
+  $('banner').innerHTML = '';
+  $('headline').innerHTML = c
+    ? `<b>${S.roster.length}</b> students on the ${esc(c.section)} roll`
+    : '';
+  $('list').innerHTML = S.roster.length
+    ? S.roster.map(s => `
+      <li>
+        <span class="roll">${esc(s.roll)}</span>
+        <span class="name">${esc(s.name)}</span>
+        <button class="ghost danger" data-drop="${esc(s.roll)}">Remove</button>
+      </li>`).join('')
+    : '<li class="empty">Nobody on this roll yet. Add the first student above.</li>';
+}
+
+$('addstu').addEventListener('click', async () => {
+  const c = course();
+  const roll = $('newroll').value.trim(), name = $('newname').value.trim();
+  if (!c) return;
+  if (!roll) { note('A roll number is needed.', 'bad'); return; }
+
+  $('addstu').disabled = true;
+  const data = await post('addStudent', { roll, name, section: c.section });
+  $('addstu').disabled = false;
+
+  if (data.ok) {
+    $('newroll').value = ''; $('newname').value = '';
+    note(`${esc(roll)} added to the ${esc(c.section)} roll.`, 'good');
+    load(true);
+  } else {
+    note(esc(data.error || 'Could not add that student.'), 'bad');
+  }
+});
+
+async function dropStudent(roll) {
+  const c = course();
+  const who = `${roll}${nameFor(roll) ? ' (' + nameFor(roll) + ')' : ''}`;
+  if (!confirm(`Remove ${who} from the ${c.section} roll?\n\nThey will not appear when you take attendance.`)) return;
+
+  const purge = confirm(
+    `Also delete every attendance record for ${roll} in ${c.section}?\n\n` +
+    `OK — erase their history too.\n` +
+    `Cancel — keep the history, just take them off the roll.`);
+
+  const data = await post('removeStudent', { roll, section: c.section, purge });
+  if (data.ok) {
+    S.history = null;
+    note(`${esc(roll)} removed from the roll` +
+         (data.purged ? ` and ${data.purged} attendance records deleted.` : ', history kept.'), 'good');
+    load(true);
+  } else {
+    note(esc(data.error || 'Could not remove that student.'), 'bad');
+  }
+}
+
+/* ---------- one click handler for the shared list ---------------------- */
+$('list').addEventListener('click', e => {
+  const drop = e.target.closest('button[data-drop]');
+  if (drop) return dropStudent(drop.dataset.drop);
+
+  const b = e.target.closest('button[data-v]');
+  if (b) {
+    if (b.dataset.key) return editMark(b);      // report views write to the sheet
+    S.marks[b.dataset.roll] = b.dataset.v;      // taking attendance is local until Save
+    paint(b.closest('li'), b.dataset.v);
+    return tally();
+  }
+  const row = e.target.closest('li.tap');
+  if (row) {
+    S.picked = row.dataset.roll;
+    if (S.view !== 'student') show('student'); else drawStudent();
+  }
+});
+
+/** Update a row in place — no re-sort, so the row you tapped stays put. */
+function paint(li, v) {
+  li.dataset.s = v;
+  li.querySelectorAll('button[data-v]').forEach(x =>
+    x.setAttribute('aria-pressed', x.dataset.v === v));
+}
+
+/* ---------- edit one mark straight into the sheet ---------------------- */
+async function editMark(btn) {
+  const roll = btn.dataset.roll, key = btn.dataset.key, v = btn.dataset.v;
+  const h = S.history, s = h.sessions.find(x => x.key === key);
+  if (!s) return;
+
+  const li = btn.closest('li');
+  const before = (h.marks[roll] || {})[key];
+  if (before === v) return;
+
+  if (!h.marks[roll]) h.marks[roll] = {};
+  h.marks[roll][key] = v;
+  paint(li, v);
+  li.classList.add('busy');
+  if (S.view === 'class') sessionCounts(key);
+  note('');
+
+  const data = await post('setMark', Object.assign(where(), {
+    date: s.date, cls: s.cls, roll, name: nameFor(roll), status: FULL[v]
+  }));
+  li.classList.remove('busy');
+
+  if (data.ok) {
+    if (S.view === 'student') drawStudent();   // refresh the banner percentage
+  } else {
+    if (before) h.marks[roll][key] = before; else delete h.marks[roll][key];
+    paint(li, before || '');
+    if (S.view === 'class') sessionCounts(key);
+    note(esc(data.error || 'That change did not reach the sheet.'), 'bad');
+  }
+}
+
+/* ---------- save a whole sitting --------------------------------------- */
+$('save').addEventListener('click', () => send(false));
+
+async function send(overwrite) {
+  if (S.busy) return;
+  const c = course();
+  if (!c || !$('date').value) { note('Pick a course and a date first.', 'bad'); return; }
+
+  S.busy = true; $('save').disabled = true; $('save').textContent = 'Saving…'; note('');
+  const cls = $('cls').value;
+
+  try {
+    const data = await post('save', Object.assign(where(), {
+      overwrite, cls, date: $('date').value,
+      records: S.roster.map(s => ({ roll: s.roll, name: s.name, status: FULL[S.marks[s.roll]] }))
+    }));
+
+    if (data.code === 'ALREADY_SAVED') {
+      if (confirm(`${c.code}, class ${cls} on ${$('date').value} is already recorded. Replace it?`)) {
+        S.busy = false; reset(); return send(true);
+      }
+      note('Kept the earlier record. Nothing was changed.');
+    } else if (data.ok) {
+      S.history = null;   // the reports are now out of date
+      note(`Saved ${data.saved} students — ${esc(c.code)}, class ${cls} on ${$('date').value}.` +
+           (data.replaced ? ' The earlier record was replaced.' : ''), 'good');
+    } else {
+      note(esc(data.error || 'The sheet rejected this save.'), 'bad');
+    }
+  } catch (err) {
+    note('Save failed — your marks are still on screen, so try again once you have a connection.<br><code>' + esc(err.message) + '</code>', 'bad');
+  } finally {
+    S.busy = false; reset();
+  }
+}
+
+function reset() { $('save').disabled = !S.roster.length; $('save').textContent = 'Save'; }
+
+load();
+</script>
+</body>
+</html>
