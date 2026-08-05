@@ -302,26 +302,62 @@ const nameFor  = roll => {
   return (s && s.name) || (S.history && S.history.names[roll]) || '';
 };
 
-/* ---------- one door to the sheet for every write -------------------- */
-async function post(action, extra) {
-  let pin = recall('pin');
-  if (pin === null) { pin = prompt('PIN (leave blank if you did not set one):') || ''; remember('pin', pin); }
-  const res = await fetch(API, {
-    // text/plain keeps this a simple request, so the browser skips preflight
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(Object.assign({ action, pin }, extra))
-  });
-  const data = await res.json();
-  if (!data.ok && /PIN/i.test(data.error || '')) forget('pin');
+/* ---------- the PIN gates reading as well as writing ------------------ */
+/**
+ * A blank saved PIN counts as no PIN. Earlier versions let you press OK on an
+ * empty prompt and stored "", which then looked like a saved answer forever.
+ */
+function pin(retry) {
+  let v = recall('pin');
+  if (retry || !v) {
+    v = (prompt(retry ? 'That PIN was not accepted. Try again:'
+                      : 'PIN for this attendance sheet:') || '').trim();
+    remember('pin', v);
+  }
+  return v;
+}
+
+/** Run a call, and if the PIN was wrong, ask once more before giving up. */
+async function tryTwice(run) {
+  let data = await run(pin());
+  if (!data.ok && data.code === 'PIN') {
+    const again = pin(true);
+    if (!again) { forget('pin'); return data; }
+    data = await run(again);
+    if (!data.ok && data.code === 'PIN') forget('pin');
+  }
   return data;
 }
+
+/* ---------- one door in, one door out --------------------------------- */
+const get = params => tryTwice(p => {
+  const q = new URLSearchParams(Object.assign({ pin: p }, params)).toString();
+  return fetch(API + '?' + q).then(r => r.json());
+});
+
+const post = (action, extra) => tryTwice(p => fetch(API, {
+  // text/plain keeps this a simple request, so the browser skips preflight
+  method: 'POST',
+  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+  body: JSON.stringify(Object.assign({ action, pin: p }, extra))
+}).then(r => r.json()));
 
 /** Course identity, sent with every attendance write. */
 const where = () => {
   const c = course();
   return { courseCode: c.code, courseTitle: c.title, section: c.section };
 };
+
+/** Shown when the script turns us away. Never leaves you with no way back in. */
+function pinWall(reason) {
+  $('course').innerHTML = '<option>Locked</option>';
+  note(esc(reason || 'The script would not accept that PIN.') +
+       '<br><br><button class="ghost" id="repin">Enter the PIN</button>', 'bad');
+}
+
+$('note').addEventListener('click', e => {
+  if (e.target.closest('#repin')) { forget('pin'); note(''); load(); }
+});
 
 /* ---------- load courses + students ---------------------------------- */
 async function load(keepMarks) {
@@ -331,7 +367,8 @@ async function load(keepMarks) {
     return;
   }
   try {
-    const data = await (await fetch(API)).json();
+    const data = await get({});
+    if (!data.ok && data.code === 'PIN') return pinWall(data.error);
     if (!data.ok) throw new Error(data.error);
     S.courses = data.courses;
     S.students = data.students;
@@ -444,9 +481,8 @@ async function loadHistory() {
   $('list').innerHTML = '<li class="empty">Reading the sheet…</li>';
   $('headline').textContent = '';
   try {
-    const url = API + '?action=history&course=' + encodeURIComponent(c.code) +
-                '&section=' + encodeURIComponent(c.section);
-    const data = await (await fetch(url)).json();
+    const data = await get({ action: 'history', course: c.code, section: c.section });
+    if (!data.ok && data.code === 'PIN') { $('list').innerHTML = ''; return pinWall(data.error); }
     if (!data.ok) throw new Error(data.error);
     S.history = data;
     const chosen = $('picksession').value;
