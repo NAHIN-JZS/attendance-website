@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#12233d">
+<!-- Ask the browser to re-check this file every visit. GitHub Pages otherwise
+     lets Chrome hold a copy for ten minutes, which makes updates look broken. -->
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>Class attendance</title>
 
 <script>
@@ -12,6 +16,10 @@
  *  It looks like: https://script.google.com/macros/s/AKfy..../exec
  * ------------------------------------------------------------------ */
 const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uArzrxGAudgWbbSjqLN8PLckGSOqg4AwH2Mt2C7O-p/exec";
+
+/*  Bumped whenever this file changes. Shown in the header so you can tell
+    at a glance whether the browser is serving the newest copy. */
+const BUILD = "2026-08-17d";
 
 /*  Shown in the header — change to whatever you like. */
 const HEADER_TITLE = "Attendance";
@@ -388,7 +396,9 @@ const CODES = ['P','L','E','A'];
 const VIEWS = ['mark','term','class','student','marks','grades','roll'];
 
 $('ttl').textContent = HEADER_TITLE;
-$('sub').textContent = HEADER_SUB;
+$('sub').textContent = HEADER_SUB + '  \u00b7  ';
+$('sub').insertAdjacentHTML('beforeend',
+  '<a href="#" id="buildinfo" style="color:inherit">build ' + BUILD + '</a>');
 $('date').value = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
 $('cls').innerHTML = Array.from({ length: CLASSES_PER_DAY },
   (_, i) => `<option value="${i+1}">Class ${i+1}</option>`).join('');
@@ -435,8 +445,18 @@ async function tryTwice(run) {
 /* ---------- one door in, one door out --------------------------------- */
 const get = params => tryTwice(p => {
   const q = new URLSearchParams(Object.assign({ pin: p }, params)).toString();
-  return fetch(API + '?' + q).then(r => r.json());
+  return timed(fetch(API + '?' + q).then(r => r.json()), 25);
 });
+
+/** Reject rather than hang: a stalled request used to sit on "Loading..." forever. */
+function timed(promise, seconds) {
+  return Promise.race([
+    promise,
+    new Promise((_, no) => setTimeout(
+      () => no(new Error('No answer from the script after ' + seconds + ' seconds.')),
+      seconds * 1000))
+  ]);
+}
 
 const post = (action, extra) => tryTwice(p => fetch(API, {
   // text/plain keeps this a simple request, so the browser skips preflight
@@ -460,6 +480,15 @@ function pinWall(reason) {
 
 $('note').addEventListener('click', e => {
   if (e.target.closest('#repin')) { forget('pin'); note(''); load(); }
+});
+
+/* Tap the build stamp when something looks wrong: it reports what this copy is
+   and clears the saved PIN, which covers the two commonest causes. */
+$('buildinfo').addEventListener('click', ev => {
+  ev.preventDefault();
+  if (!confirm('Build ' + BUILD + '\n\nClear the saved PIN and reload?')) return;
+  forget('pin'); forget('course');
+  location.replace(location.pathname + '?v=' + Date.now());
 });
 
 /* ---------- load courses + students ---------------------------------- */
@@ -486,7 +515,13 @@ async function load(keepMarks) {
     if (last !== null && S.courses[last]) $('course').value = last;
     keepMarks ? rebuildRoster() : pickCourse();
   } catch (err) {
-    note('Could not reach the sheet. Check that the web app is deployed with access set to <b>Anyone</b>.<br><code>' + esc(err.message) + '</code>', 'bad');
+    $('course').innerHTML = '<option>Not loaded</option>';
+    note('Could not reach the script.<br><code>' + esc(err.message) + '</code>' +
+         '<br><br>Things to check, in order:' +
+         '<br>1. The deployment\u2019s access is set to <b>Anyone</b>.' +
+         '<br>2. You published a <b>new version</b> after your last code edit.' +
+         '<br>3. The link below returns text rather than an error page.' +
+         '<br><br><a href="' + esc(API) + '" target="_blank" rel="noopener">Open the script URL directly</a>', 'bad');
   }
 }
 
