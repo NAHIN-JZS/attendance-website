@@ -22,6 +22,14 @@ const PASS_MARK = 75;
 
 /*  How many class slots a single day can have. */
 const CLASSES_PER_DAY = 4;
+
+/*  Letter grades, highest first: [percentage needed, letter, grade point].
+ *  This is the usual UGC scale — edit it to match your department. */
+const GRADE_SCALE = [
+  [80, 'A+', 4.00], [75, 'A', 3.75], [70, 'A-', 3.50], [65, 'B+', 3.25],
+  [60, 'B',  3.00], [55, 'B-', 2.75], [50, 'C+', 2.50], [45, 'C', 2.25],
+  [40, 'D',  2.00], [0,  'F',  0.00]
+];
 </script>
 
 <style>
@@ -30,6 +38,7 @@ const CLASSES_PER_DAY = 4;
   --paper:#fff; --wash:#f2f5f9; --line:#dde3ec;
   --p:#0f7a4d; --p-bg:#e4f4ea;
   --l:#a4620b; --l-bg:#fcefda;
+  --e:#1b5f8f; --e-bg:#e2eef7;
   --a:#b32a45; --a-bg:#fbe6ea;
   --mono:ui-monospace,"SF Mono",Menlo,"Roboto Mono","DejaVu Sans Mono",monospace;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -92,6 +101,7 @@ li:first-child{border-top:0}
 li.hide{display:none}
 li[data-s="P"]{border-left-color:var(--p)}
 li[data-s="L"]{border-left-color:var(--l);background:var(--l-bg)}
+li[data-s="E"]{border-left-color:var(--e);background:var(--e-bg)}
 li[data-s="A"]{border-left-color:var(--a);background:var(--a-bg)}
 li.tap{cursor:pointer}
 li.tap:hover{background:var(--wash)}
@@ -106,11 +116,12 @@ li.busy{opacity:.5}
 
 /* P / L / A switch */
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;flex-shrink:0}
-.seg button{font:inherit;font-size:13px;font-weight:700;width:38px;height:36px;border:0;
+.seg button{font:inherit;font-size:13px;font-weight:700;width:34px;height:36px;border:0;
   border-left:1px solid var(--line);background:var(--paper);color:var(--muted);cursor:pointer}
 .seg button:first-child{border-left:0}
 .seg button[aria-pressed="true"][data-v="P"]{background:var(--p);color:#fff}
 .seg button[aria-pressed="true"][data-v="L"]{background:var(--l);color:#fff}
+.seg button[aria-pressed="true"][data-v="E"]{background:var(--e);color:#fff}
 .seg button[aria-pressed="true"][data-v="A"]{background:var(--a);color:#fff}
 
 /* summary rows */
@@ -122,6 +133,20 @@ li.srow[data-low="1"] .pct{color:var(--a)}
 .meter i{display:block;height:100%;border-radius:2px;background:var(--p)}
 li.srow[data-low="1"] .meter i{background:var(--a)}
 .chev{color:var(--muted);font-size:18px;line-height:1}
+.score{width:74px;flex-shrink:0;text-align:right;font-family:var(--mono);
+  font-variant-numeric:tabular-nums;font-size:15px;padding:8px 9px}
+.score.full{border-color:#b9dfc9;background:var(--p-bg)}
+.score.zero{border-color:#eebfc8;background:var(--a-bg);color:var(--a)}
+.score.bad{border-color:var(--a);background:var(--a-bg)}
+.outof{font-size:13px;color:var(--muted);flex-shrink:0;min-width:2.6em}
+.wrow{display:flex;align-items:center;gap:10px;padding:7px 0}
+.wrow input[type=text]{flex:1}
+.wrow input[type=number]{width:88px;text-align:right}
+.wrow button{flex-shrink:0}
+.bars{display:flex;gap:2px;margin-top:5px}
+.bars i{height:3px;border-radius:2px;background:var(--line)}
+.total{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:17px;
+  font-weight:700;min-width:3.6em;text-align:right}
 .gone{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   color:var(--muted);background:var(--wash);padding:3px 7px;border-radius:5px;margin-left:6px}
 
@@ -130,6 +155,7 @@ li.srow[data-low="1"] .meter i{background:var(--a)}
   padding:4px 9px;border-radius:999px;flex-shrink:0;background:var(--wash);color:var(--muted)}
 .pill.P{background:var(--p-bg);color:var(--p)}
 .pill.L{background:var(--l-bg);color:var(--l)}
+.pill.E{background:var(--e-bg);color:var(--e)}
 .pill.A{background:var(--a-bg);color:var(--a)}
 .grouphead{display:block;padding:9px 12px;background:var(--wash);font-size:11.5px;
   font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
@@ -180,6 +206,8 @@ footer[hidden]{display:none}
       <button id="tab-term"    role="tab" aria-selected="false">Whole term</button>
       <button id="tab-class"   role="tab" aria-selected="false">One class</button>
       <button id="tab-student" role="tab" aria-selected="false">One student</button>
+      <button id="tab-marks"   role="tab" aria-selected="false">Marks</button>
+      <button id="tab-grades"  role="tab" aria-selected="false">Grades</button>
       <button id="tab-roll"    role="tab" aria-selected="false">Students</button>
     </div>
   </div>
@@ -216,7 +244,10 @@ footer[hidden]{display:none}
     <!-- whole term -->
     <div id="ctl-term" hidden>
       <div class="tools" style="justify-content:space-between">
-        <label class="check"><input type="checkbox" id="lateOk" checked> Count late as present</label>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <label class="check"><input type="checkbox" id="lateOk" checked> Late counts</label>
+          <label class="check"><input type="checkbox" id="earlyOk" checked> Early leave counts</label>
+        </div>
         <button class="ghost" id="csv">Download CSV</button>
       </div>
     </div>
@@ -248,6 +279,54 @@ footer[hidden]{display:none}
       </div>
     </div>
 
+    <!-- enter marks -->
+    <div id="ctl-marks" hidden>
+      <div class="fields" style="margin-top:10px;grid-template-columns:1fr 1fr">
+        <div>
+          <label for="mcomp">Component</label>
+          <select id="mcomp"></select>
+        </div>
+        <div>
+          <label for="mitem">Item</label>
+          <select id="mitem"></select>
+        </div>
+      </div>
+      <div class="fields three" style="margin-top:10px">
+        <div>
+          <label for="mlabel">Item name</label>
+          <input id="mlabel" placeholder="Homework 1" autocomplete="off">
+        </div>
+        <div>
+          <label for="mdate">Date</label>
+          <input type="date" id="mdate">
+        </div>
+        <div>
+          <label for="mmax">Out of</label>
+          <input type="number" id="mmax" min="0" step="0.5" value="10">
+        </div>
+      </div>
+      <div class="tools" style="justify-content:space-between">
+        <span style="font-size:13px;color:var(--muted)">Type <b>0</b> for not submitted. Leave blank only to excuse someone — blank is left out of their total.</span>
+        <button class="ghost danger" id="delitem" hidden>Delete this item</button>
+      </div>
+    </div>
+
+    <!-- grades -->
+    <div id="ctl-grades" hidden>
+      <div class="tools" style="justify-content:space-between">
+        <button class="ghost" id="editw">Adjust marks</button>
+        <button class="ghost" id="mcsv">Download CSV</button>
+      </div>
+      <div id="weights" hidden style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+        <div id="wlist"></div>
+        <div class="tools">
+          <button class="ghost" id="addcomp">Add component</button>
+          <button class="ghost" id="savew">Save</button>
+          <span id="wtotal" style="font-size:13px;color:var(--muted)"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- students on the roll -->
     <div id="ctl-roll" hidden>
       <div class="fields add" style="margin-top:10px">
@@ -274,15 +353,18 @@ footer[hidden]{display:none}
   <div class="wrap bar">
     <div class="tally" id="tally">No students loaded</div>
     <button class="save" id="save" disabled>Save</button>
+    <button class="save" id="savem" hidden>Save marks</button>
   </div>
 </footer>
 
 <script>
 const $ = id => document.getElementById(id);
 const S = { courses: [], students: [], roster: [], marks: {},
-            history: null, view: 'mark', picked: null, busy: false };
-const FULL = { P: 'Present', L: 'Late', A: 'Absent' };
-const VIEWS = ['mark','term','class','student','roll'];
+            history: null, grades: null, entry: {},
+            view: 'mark', picked: null, busy: false };
+const FULL = { P: 'Present', L: 'Late', E: 'Early leave', A: 'Absent' };
+const CODES = ['P','L','E','A'];
+const VIEWS = ['mark','term','class','student','marks','grades','roll'];
 
 $('ttl').textContent = HEADER_TITLE;
 $('sub').textContent = HEADER_SUB;
@@ -392,7 +474,9 @@ function pickCourse() {
   if (!c) return;
   remember('course', $('course').value);
   S.history = null;
+  S.grades = null;
   S.picked = null;
+  S.entry = {};
   rebuildRoster();
 }
 
@@ -414,8 +498,11 @@ function show(view) {
     $('tab-'+v).setAttribute('aria-selected', v === view);
     $('ctl-'+v).hidden = v !== view;
   });
-  $('foot').hidden = view !== 'mark';
-  document.body.classList.toggle('marking', view === 'mark');
+  const footed = view === 'mark' || view === 'marks';
+  $('foot').hidden = !footed;
+  $('save').hidden = view !== 'mark';
+  $('savem').hidden = view !== 'marks';
+  document.body.classList.toggle('marking', footed);
   note('');
   render();
 }
@@ -425,6 +512,11 @@ function render() {
   $('banner').innerHTML = '';
   if (S.view === 'mark') return drawRoster();
   if (S.view === 'roll') return drawRoll();
+
+  if (S.view === 'marks' || S.view === 'grades') {
+    if (!S.grades) return loadGrades();
+    return S.view === 'marks' ? drawEntry() : drawGrades();
+  }
   if (!S.history) return loadHistory();
   if (S.view === 'term') return drawTerm();
   if (S.view === 'class') return drawSession();
@@ -449,18 +541,18 @@ function drawRoster() {
 
 /** The P / L / A control. Pass a session key to make it edit the sheet directly. */
 function seg(roll, current, key) {
-  return '<span class="seg">' + ['P','L','A'].map(v =>
+  return '<span class="seg">' + CODES.map(v =>
     `<button data-v="${v}" data-roll="${esc(roll)}"${key ? ` data-key="${esc(key)}"` : ''}` +
     ` aria-pressed="${current===v}" aria-label="${FULL[v]} ${esc(roll)}">${v}</button>`).join('') + '</span>';
 }
 
 function tally() {
-  const n = { P:0, L:0, A:0 };
+  const n = { P:0, L:0, E:0, A:0 };
   S.roster.forEach(s => n[S.marks[s.roll]]++);
+  const chip = (c,v,word) => `<span class="dot" style="background:var(--${c})"></span><b>${v}</b> ${word}`;
   $('tally').innerHTML = S.roster.length
-    ? `<span class="dot" style="background:var(--p)"></span><b>${n.P}</b> present &nbsp;
-       <span class="dot" style="background:var(--l)"></span><b>${n.L}</b> late &nbsp;
-       <span class="dot" style="background:var(--a)"></span><b>${n.A}</b> absent`
+    ? [chip('p',n.P,'present'), chip('l',n.L,'late'),
+       chip('e',n.E,'early'), chip('a',n.A,'absent')].join(' &nbsp; ')
     : 'No students loaded';
 }
 
@@ -489,10 +581,10 @@ async function loadHistory() {
     $('picksession').innerHTML = data.sessions.slice().reverse()
       .map(s => `<option value="${s.key}">${esc(sessionLabel(s))}</option>`).join('');
     if (data.sessions.some(s => s.key === chosen)) $('picksession').value = chosen;
-    render();
+    if (!quiet) render();
   } catch (err) {
     S.history = null;
-    $('list').innerHTML = '';
+    if (!quiet) $('list').innerHTML = '';
     note('Could not read past records.<br><code>' + esc(err.message) + '</code>', 'bad');
   }
 }
@@ -510,16 +602,16 @@ function sessionLabel(s) {
 }
 
 function summarise() {
-  const h = S.history, lateOk = $('lateOk').checked;
+  const h = S.history, lateOk = $('lateOk').checked, earlyOk = $('earlyOk').checked;
   const rolls = Object.keys(h.marks);
   S.roster.forEach(s => { if (rolls.indexOf(s.roll) === -1) rolls.push(s.roll); });
 
   return rolls.map(roll => {
     const rec = h.marks[roll] || {};
-    const n = { P:0, L:0, A:0 };
+    const n = { P:0, L:0, E:0, A:0 };
     h.sessions.forEach(s => { if (rec[s.key]) n[rec[s.key]]++; });
-    const held = n.P + n.L + n.A;
-    const credit = n.P + (lateOk ? n.L : 0);
+    const held = n.P + n.L + n.E + n.A;
+    const credit = n.P + (lateOk ? n.L : 0) + (earlyOk ? n.E : 0);
     const known = S.roster.find(s => s.roll === roll);
     return { roll, name: (known && known.name) || h.names[roll] || '', onRoll: !!known,
              ...n, held, pct: held ? Math.round(credit / held * 100) : 0 };
@@ -545,7 +637,7 @@ function summaryRow(r) {
   return `<li class="srow tap" data-roll="${esc(r.roll)}" data-low="${r.held && r.pct < PASS_MARK ? 1 : 0}">
       <span class="roll">${esc(r.roll)}</span>
       <span class="name">${esc(r.name)}${r.onRoll ? '' : '<span class="gone">off roll</span>'}
-        <em>${r.held ? `${r.P} present · ${r.L} late · ${r.A} absent · of ${r.held}`
+        <em>${r.held ? `${r.P} present · ${r.L} late · ${r.E} early · ${r.A} absent · of ${r.held}`
                      : 'never marked in this course'}</em>
         <span class="meter"><i style="width:${r.held ? r.pct : 0}%"></i></span>
       </span>
@@ -554,7 +646,11 @@ function summaryRow(r) {
     </li>`;
 }
 
-$('lateOk').addEventListener('change', () => { if (S.view === 'term') drawTerm(); });
+['lateOk','earlyOk'].forEach(id => $(id).addEventListener('change', () => {
+  if (S.view === 'term') drawTerm();
+  else if (S.view === 'student') drawStudent();
+  else if (S.view === 'grades') drawGrades();
+}));
 
 $('csv').addEventListener('click', () => {
   if (!S.history || !S.history.sessions.length) return;
@@ -589,10 +685,10 @@ function drawSession() {
     $('list').innerHTML = '<li class="empty">Nothing recorded for this course yet.</li>';
     return;
   }
-  const groups = { A:[], L:[], P:[] };
+  const groups = { A:[], E:[], L:[], P:[] };
   Object.keys(h.marks).forEach(roll => {
     const st = h.marks[roll][key];
-    if (st) groups[st].push({ roll, name: h.names[roll] || '' });
+    if (st && groups[st]) groups[st].push({ roll, name: h.names[roll] || '' });
   });
 
   sessionCounts(key);
@@ -606,17 +702,21 @@ function drawSession() {
         ${seg(x.roll, k, key)}
       </li>`).join('');
 
-  $('list').innerHTML = block('A','Absent') + block('L','Late') + block('P','Present');
+  $('list').innerHTML = block('A','Absent') + block('E','Left early') +
+                        block('L','Late') + block('P','Present');
 }
 
 /** Recount the headline from current marks — cheap enough to redo on every edit. */
 function sessionCounts(key) {
-  const h = S.history, n = { P:0, L:0, A:0 };
-  Object.keys(h.marks).forEach(roll => { const st = h.marks[roll][key]; if (st) n[st]++; });
+  const h = S.history, n = { P:0, L:0, E:0, A:0 };
+  Object.keys(h.marks).forEach(roll => {
+    const st = h.marks[roll][key]; if (st && n[st] !== undefined) n[st]++;
+  });
   const s = h.sessions.find(x => x.key === key);
-  const total = n.P + n.L + n.A;
+  const total = n.P + n.L + n.E + n.A;
   $('headline').innerHTML = `${esc(sessionLabel(s))} · <b>${n.P}</b> present, ` +
-    `<b>${n.L}</b> late, <b style="color:var(--a)">${n.A}</b> absent of ${total}`;
+    `<b>${n.L}</b> late, <b>${n.E}</b> left early, ` +
+    `<b style="color:var(--a)">${n.A}</b> absent of ${total}`;
 }
 
 $('picksession').addEventListener('change', drawSession);
@@ -656,7 +756,7 @@ function drawStudent() {
 
   $('banner').innerHTML = `<div class="who">
       <span class="roll">${esc(r.roll)}</span>
-      <span class="name">${esc(r.name)}<em>${r.P} present · ${r.L} late · ${r.A} absent · of ${r.held} classes</em></span>
+      <span class="name">${esc(r.name)}<em>${r.P} present · ${r.L} late · ${r.E} early · ${r.A} absent · of ${r.held} classes</em></span>
       <span class="pct" style="color:${r.held && r.pct < PASS_MARK ? '#ff9db0' : '#8fe3b6'}">${r.held ? r.pct+'%' : '—'}</span>
     </div>`;
   $('headline').innerHTML = r.held && r.pct < PASS_MARK
@@ -750,6 +850,8 @@ async function dropStudent(roll) {
 
 /* ---------- one click handler for the shared list ---------------------- */
 $('list').addEventListener('click', e => {
+  if (e.target.closest('#mkdefault')) return makeDefaults();
+
   const drop = e.target.closest('button[data-drop]');
   if (drop) return dropStudent(drop.dataset.drop);
 
@@ -805,6 +907,436 @@ async function editMark(btn) {
     note(esc(data.error || 'That change did not reach the sheet.'), 'bad');
   }
 }
+
+
+/* ====================================================================== *
+ *  Internal marks
+ * ====================================================================== */
+
+const NEW_ITEM = '\u0000new';
+
+async function loadGrades() {
+  const c = course();
+  if (!c) return;
+  $('list').innerHTML = '<li class="empty">Reading the sheet\u2026</li>';
+  $('headline').textContent = '';
+  try {
+    const data = await get({ action: 'marks', course: c.code, section: c.section });
+    if (!data.ok && data.code === 'PIN') { $('list').innerHTML = ''; return pinWall(data.error); }
+    if (!data.ok) throw new Error(data.error);
+    S.grades = data;
+    fillComponents();
+    render();
+  } catch (err) {
+    S.grades = null;
+    $('list').innerHTML = '';
+    note('Could not read the marks.<br><code>' + esc(err.message) + '</code>', 'bad');
+  }
+}
+
+function fillComponents() {
+  const g = S.grades;
+  const keep = $('mcomp').value;
+  $('mcomp').innerHTML = g.components.map(c =>
+    `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  if (g.components.some(c => c.name === keep)) $('mcomp').value = keep;
+  fillItems();
+}
+
+function fillItems() {
+  const g = S.grades, comp = $('mcomp').value;
+  const mine = g.items.filter(i => i.component === comp);
+  const keep = $('mitem').value;
+  $('mitem').innerHTML = mine.map(i =>
+      `<option value="${esc(i.key)}">${esc(i.item)} \u00b7 out of ${i.max}</option>`).join('') +
+    `<option value="${NEW_ITEM}">+ New item\u2026</option>`;
+  $('mitem').value = mine.some(i => i.key === keep) ? keep : (mine.length ? mine[0].key : NEW_ITEM);
+  loadEntry();
+}
+
+/** Pull the chosen item into the entry form, or clear it for a new one. */
+function loadEntry() {
+  const g = S.grades, key = $('mitem').value, comp = $('mcomp').value;
+  const item = g.items.find(i => i.key === key);
+
+  if (item) {
+    S.entry = { key, isNew: false };
+    $('mlabel').value = item.item;
+    $('mmax').value = item.max;
+    $('mdate').value = item.date;
+    $('delitem').hidden = false;
+  } else {
+    S.entry = { key: null, isNew: true };
+    $('mlabel').value = nextLabel(comp);
+    $('mdate').value = new Date().toLocaleDateString('en-CA');
+    $('delitem').hidden = true;
+  }
+  if (S.view === 'marks') drawEntry();
+}
+
+/** "Homework 3" when Homework 1 and 2 already exist. */
+function nextLabel(comp) {
+  const n = S.grades.items.filter(i => i.component === comp).length;
+  return comp + ' ' + (n + 1);
+}
+
+function drawEntry() {
+  const g = S.grades;
+  if (!g.components.length) return offerDefaults();
+  if (!S.roster.length) {
+    $('headline').textContent = '';
+    $('list').innerHTML = '<li class="empty">Nobody on this roll yet. Add students on the Students tab.</li>';
+    return;
+  }
+  const key = S.entry.key, max = Number($('mmax').value) || 0;
+  $('headline').innerHTML = S.entry.isNew
+    ? 'New item \u2014 name it above, then enter the scores.'
+    : `Editing <b>${esc($('mlabel').value)}</b>. Saving replaces every score for this item.`;
+
+  $('list').innerHTML = S.roster.map(s => {
+    const v = key && g.scores[s.roll] ? g.scores[s.roll][key] : undefined;
+    return `<li>
+      <span class="roll">${esc(s.roll)}</span>
+      <span class="name">${esc(s.name)}</span>
+      <input class="score" type="text" inputmode="decimal" autocomplete="off"
+             data-roll="${esc(s.roll)}" value="${v === undefined ? '' : v}"
+             aria-label="Score for ${esc(s.roll)}, or A for absent">
+      <span class="outof">/ ${max}</span>
+    </li>`;
+  }).join('');
+}
+
+function offerDefaults() {
+  const c = course();
+  $('headline').textContent = '';
+  $('list').innerHTML = `<li class="empty">
+      No mark components set up for ${esc(c.code)} yet.<br><br>
+      <button class="ghost" id="mkdefault">Set up ${esc(c.type)} components</button>
+    </li>`;
+}
+
+/* Marks allotted, not percentages. The usual 60 + 40 and 30 + 70 splits. */
+const DEFAULTS = {
+  Sessional: [['Homework',10],['Lab task',20],['Lab report',20],['Class performance',10]],
+  Theory: [['Homework',5],['Assignment',5],['Spot test',5],['Class test',10],['Class performance',5]]
+};
+
+async function makeDefaults() {
+  const c = course();
+  const list = (DEFAULTS[c.type] || DEFAULTS.Theory).map(x => ({ name: x[0], marks: x[1] }));
+  const data = await post('saveComponents', Object.assign(where(), { components: list }));
+  if (data.ok) { S.grades = null; note(''); loadGrades(); }
+  else note(esc(data.error || 'Could not save those components.'), 'bad');
+}
+
+['mcomp','mitem','mmax','mlabel'].forEach(id => $(id).addEventListener('change', () => {
+  if (id === 'mcomp') return fillItems();
+  if (id === 'mitem') return loadEntry();
+  if (S.view === 'marks') drawEntry();
+}));
+
+/** '' excuses, A means absent and scores 0, anything else must be a number. */
+function readScore(raw) {
+  const v = String(raw).trim();
+  if (v === '') return { skip: true };
+  if (/^a$/i.test(v)) return { score: 0 };
+  const n = Number(v);
+  return isNaN(n) ? { bad: true } : { score: n };
+}
+
+/* ---- fill 0 for whoever was absent that day ------------------------- */
+$('fillabs').addEventListener('click', async () => {
+  const date = $('mdate').value;
+  if (!date) { note('Set the item date first.', 'bad'); return; }
+
+  $('fillabs').disabled = true;
+  if (!S.history) await loadHistory(true);
+  $('fillabs').disabled = false;
+  if (!S.history) return;
+
+  const keys = S.history.sessions.filter(s => s.date === date).map(s => s.key);
+  if (!keys.length) {
+    note('No attendance was recorded for ' + esc(prettyDate(date)) + '.', 'bad');
+    return;
+  }
+
+  let hit = 0;
+  document.querySelectorAll('#list input.score').forEach(el => {
+    const rec = S.history.marks[el.dataset.roll] || {};
+    if (keys.some(k => rec[k] === 'A')) { el.value = 'A'; hit++; }
+  });
+  paintScores();
+  note(hit ? `Marked ${hit} absentee${hit === 1 ? '' : 's'} as A. Save to store it.`
+           : 'Nobody was absent that day.', hit ? 'good' : '');
+});
+
+/* ---- save one item ------------------------------------------------- */
+$('savem').addEventListener('click', () => saveMarks(false));
+
+async function saveMarks(overwrite) {
+  if (S.busy) return;
+  const label = $('mlabel').value.trim();
+  if (!label) { note('Give the item a name first.', 'bad'); return; }
+
+  S.busy = true; $('savem').disabled = true; $('savem').textContent = 'Saving\u2026'; note('');
+
+  const boxes = Array.from(document.querySelectorAll('#list input.score'));
+  const bad = boxes.filter(el => readScore(el.value).bad);
+  if (bad.length) {
+    S.busy = false; resetM();
+    note(`${bad.length} box${bad.length === 1 ? '' : 'es'} hold something that is neither a number nor A.`, 'bad');
+    bad[0].focus();
+    return;
+  }
+  const records = boxes.map(el => {
+    const p = readScore(el.value);
+    return { roll: el.dataset.roll, name: nameFor(el.dataset.roll),
+             score: p.skip ? '' : p.score };
+  });
+
+  try {
+    const data = await post('saveItem', Object.assign(where(), {
+      overwrite, isNew: S.entry.isNew, component: $('mcomp').value, item: label,
+      max: Number($('mmax').value) || 0, date: $('mdate').value, records
+    }));
+
+    if (data.code === 'ALREADY_SAVED') {
+      if (confirm(`An item called "${label}" already exists in ${$('mcomp').value}. Replace it?`)) {
+        S.busy = false; resetM(); return saveMarks(true);
+      }
+      note('Kept the earlier item. Nothing was changed.');
+    } else if (data.ok) {
+      note(`Saved ${data.saved} scores for ${esc(label)}.`, 'good');
+      S.grades = null;
+      S.busy = false; resetM();
+      await loadGrades();
+      $('mitem').value = $('mcomp').value + '#' + label;
+      loadEntry();
+      return;
+    } else {
+      note(esc(data.error || 'The sheet rejected those marks.'), 'bad');
+    }
+  } catch (err) {
+    note('Save failed \u2014 your scores are still on screen, so try again once you have a connection.<br><code>' + esc(err.message) + '</code>', 'bad');
+  } finally {
+    S.busy = false; resetM();
+  }
+}
+
+function resetM() { $('savem').disabled = false; $('savem').textContent = 'Save marks'; }
+
+/** Green for full marks, red for a zero or an A, so the column reads at a glance. */
+function paintScores() {
+  const max = Number($('mmax').value) || 0;
+  document.querySelectorAll('#list input.score').forEach(el => {
+    const p = readScore(el.value);
+    el.classList.toggle('full', !p.skip && !p.bad && max > 0 && p.score >= max);
+    el.classList.toggle('zero', !p.skip && !p.bad && p.score === 0);
+    el.classList.toggle('bad', !!p.bad);
+  });
+}
+$('list').addEventListener('input', e => { if (e.target.classList.contains('score')) paintScores(); });
+
+$('delitem').addEventListener('click', async () => {
+  const item = S.grades && S.grades.items.find(i => i.key === S.entry.key);
+  if (!item) return;
+  if (!confirm(`Delete every score for ${item.item}?\n\nThis cannot be undone.`)) return;
+
+  const data = await post('deleteItem', Object.assign(where(), {
+    component: item.component, item: item.item
+  }));
+  if (data.ok) { S.grades = null; note(`Deleted ${data.deleted} scores.`, 'good'); loadGrades(); }
+  else note(esc(data.error || 'Could not delete that item.'), 'bad');
+});
+
+/* ---- weighted totals ------------------------------------------------ */
+
+/**
+ * Raw marks, not percentages.
+ *
+ * Each component is worth the marks allotted to it. A student's score for a
+ * component is their share of the items recorded so far, scaled to that
+ * allotment: three homeworks out of 10 each, scoring 24, is 24/30 of the 5
+ * marks Homework is worth.
+ *
+ *   per        marks earned per component (null when nothing recorded)
+ *   earned     those added up
+ *   assessed   marks allotted to the components that have any item recorded
+ *   possible   marks allotted across every component
+ */
+function grade(roll) {
+  const g = S.grades, per = {};
+  let earned = 0, assessed = 0, possible = 0;
+
+  g.components.forEach(c => {
+    const allot = Number(c.marks) || 0;
+    possible += allot;
+
+    let got = 0, out = 0;
+    g.items.filter(i => i.component === c.name).forEach(i => {
+      const v = (g.scores[roll] || {})[i.key];
+      if (v !== undefined) { got += v; out += i.max; }
+    });
+
+    if (out) {
+      per[c.name] = got / out * allot;
+      earned += per[c.name];
+      assessed += allot;
+    } else {
+      per[c.name] = null;
+    }
+  });
+
+  return { per, earned, assessed, possible,
+           pct: assessed ? earned / assessed * 100 : null };
+}
+
+/** Letter and grade point for a percentage. */
+function letter(pct) {
+  if (pct === null) return { grade: '—', point: null };
+  const row = GRADE_SCALE.find(r => pct >= r[0]) || GRADE_SCALE[GRADE_SCALE.length - 1];
+  return { grade: row[1], point: row[2] };
+}
+
+function drawGrades() {
+  const g = S.grades;
+  if (!g.components.length) return offerDefaults();
+
+  const possible = g.components.reduce((a, c) => a + (Number(c.marks) || 0), 0);
+  const rolls = S.roster.map(s => s.roll);
+  Object.keys(g.scores).forEach(r => { if (rolls.indexOf(r) === -1) rolls.push(r); });
+
+  const sample = rolls.length ? grade(rolls[0]) : null;
+  const assessed = sample ? sample.assessed : 0;
+
+  $('headline').innerHTML =
+    `<b>${g.components.length}</b> components worth <b>${round(possible)}</b> marks \u00b7 ` +
+    `<b>${g.items.length}</b> items` +
+    (assessed < possible
+      ? ` \u00b7 <b>${round(assessed)}</b> assessed so far, so totals are out of ${round(assessed)}`
+      : '');
+
+  $('list').innerHTML = rolls.sort((a,b) => a.localeCompare(b, undefined, {numeric:true}))
+    .map(roll => {
+      const r = grade(roll);
+      const lg = letter(r.pct);
+      const bars = g.components.map(c => {
+        const v = r.per[c.name], allot = Number(c.marks) || 0;
+        const share = allot ? (v === null ? 0 : v / allot * 100) : 0;
+        const col = v === null ? 'var(--line)' : (share < 40 ? 'var(--a)' : 'var(--p)');
+        return `<i style="flex:${allot || 1};background:${col}" title="${esc(c.name)}"></i>`;
+      }).join('');
+      const detail = g.components.map(c =>
+        `${esc(c.name)} ${r.per[c.name] === null ? '\u2014' : round(r.per[c.name])}/${round(Number(c.marks)||0)}`
+      ).join(' \u00b7 ');
+      return `<li data-low="${r.pct !== null && r.pct < 40 ? 1 : 0}" class="srow">
+        <span class="roll">${esc(roll)}</span>
+        <span class="name">${esc(nameFor(roll))}<em>${detail}</em>
+          <span class="bars">${bars}</span></span>
+        <span class="total">${round(r.earned)}<em style="display:block;font-style:normal;font-size:11px;color:var(--muted);font-weight:600">of ${round(r.assessed)}</em></span>
+        <span class="pct" style="min-width:2.6em">${lg.grade}</span>
+      </li>`;
+    }).join('');
+}
+
+const round = n => Math.round(n * 10) / 10;
+
+/* ---- weight editor --------------------------------------------------- */
+$('editw').addEventListener('click', () => {
+  const open = $('weights').hidden;
+  $('weights').hidden = !open;
+  $('editw').textContent = open ? 'Hide' : 'Adjust marks';
+  if (open) drawWeights();
+});
+
+function drawWeights(list) {
+  const items = list || (S.grades ? S.grades.components.map(c => ({ ...c })) : []);
+  $('wlist').innerHTML = items.map((c, i) => `
+    <div class="wrow">
+      <input type="text" data-w="name" data-i="${i}" value="${esc(c.name)}" aria-label="Component name">
+      <input type="number" data-w="marks" data-i="${i}" value="${c.marks}" min="0" step="1" aria-label="Marks allotted">
+      <button class="ghost danger" data-wdel="${i}">\u00d7</button>
+    </div>`).join('') || '<p style="font-size:13.5px;color:var(--muted);margin:0">No components yet.</p>';
+  weightTotal();
+}
+
+function readWeights() {
+  const out = [];
+  $('wlist').querySelectorAll('[data-w="name"]').forEach(el => {
+    const i = el.dataset.i;
+    const w = $('wlist').querySelector(`[data-w="marks"][data-i="${i}"]`);
+    out.push({ name: el.value.trim(), marks: Number(w.value) || 0 });
+  });
+  return out.filter(c => c.name);
+}
+
+function weightTotal() {
+  const t = readWeights().reduce((a, c) => a + c.marks, 0);
+  $('wtotal').innerHTML = `Course total <b>${round(t)}</b> marks`;
+}
+
+$('wlist').addEventListener('input', weightTotal);
+$('wlist').addEventListener('click', e => {
+  const d = e.target.closest('[data-wdel]');
+  if (!d) return;
+  const list = readWeights();
+  list.splice(Number(d.dataset.wdel), 1);
+  drawWeights(list);
+});
+
+$('addcomp').addEventListener('click', () => drawWeights(readWeights().concat([{ name: '', weight: 0 }])));
+
+$('savew').addEventListener('click', async () => {
+  const list = readWeights();
+  const gone = S.grades.components.filter(c => !list.some(x => x.name === c.name))
+    .filter(c => S.grades.items.some(i => i.component === c.name));
+  if (gone.length && !confirm(
+      `${gone.map(c => c.name).join(', ')} still ${gone.length === 1 ? 'has' : 'have'} marks recorded.\n\n` +
+      `Removing ${gone.length === 1 ? 'it' : 'them'} here leaves those marks in the sheet but out of every total.`)) return;
+
+  $('savew').disabled = true;
+  const data = await post('saveComponents', Object.assign(where(), { components: list }));
+  $('savew').disabled = false;
+  if (data.ok) {
+    S.grades = null; note('Saved.', 'good');
+    $('weights').hidden = true; $('editw').textContent = 'Adjust weights';
+    loadGrades();
+  } else note(esc(data.error || 'Could not save those weights.'), 'bad');
+});
+
+/* ---- marks CSV -------------------------------------------------------- */
+$('mcsv').addEventListener('click', () => {
+  const g = S.grades;
+  if (!g || !g.components.length) return;
+  const c = course();
+
+  const head = ['Roll','Name']
+    .concat(g.items.map(i => `${i.component} - ${i.item} (of ${i.max})`))
+    .concat(g.components.map(x => `${x.name} (of ${round(Number(x.marks)||0)})`))
+    .concat(['Earned','Out of','Percentage','Grade','Point']);
+
+  const rolls = S.roster.map(s => s.roll);
+  Object.keys(g.scores).forEach(r => { if (rolls.indexOf(r) === -1) rolls.push(r); });
+
+  const body = rolls.sort((a,b) => a.localeCompare(b, undefined, {numeric:true})).map(roll => {
+    const r = grade(roll);
+    const lg = letter(r.pct);
+    return [roll, nameFor(roll)]
+      .concat(g.items.map(i => { const v = (g.scores[roll]||{})[i.key]; return v === undefined ? '' : v; }))
+      .concat(g.components.map(x => r.per[x.name] === null ? '' : round(r.per[x.name])))
+      .concat([round(r.earned), round(r.assessed),
+               r.pct === null ? '' : round(r.pct), lg.grade,
+               lg.point === null ? '' : lg.point.toFixed(2)]);
+  });
+
+  const csv = [head].concat(body)
+    .map(l => l.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type:'text/csv' }));
+  a.download = `${c.code.replace(/\s+/g,'')}-${c.section}-marks.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
 
 /* ---------- save a whole sitting --------------------------------------- */
 $('save').addEventListener('click', () => send(false));
