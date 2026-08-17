@@ -306,9 +306,12 @@ footer[hidden]{display:none}
         </div>
       </div>
       <div class="tools" style="justify-content:space-between">
-        <span style="font-size:13px;color:var(--muted)">Type <b>0</b> for not submitted. Leave blank only to excuse someone — blank is left out of their total.</span>
+        <button class="ghost" id="fillabs">Absent that day → A</button>
         <button class="ghost danger" id="delitem" hidden>Delete this item</button>
       </div>
+      <p style="margin:8px 0 0;font-size:13px;color:var(--muted);line-height:1.5">
+        Type a number, or <b>A</b> for absent — an A is stored as 0. Leave a box
+        blank only to excuse someone; blank is left out of their total.</p>
     </div>
 
     <!-- grades -->
@@ -358,7 +361,25 @@ footer[hidden]{display:none}
 </footer>
 
 <script>
-const $ = id => document.getElementById(id);
+/* If anything below throws, say so on the page. A silent failure used to leave
+   the course list stuck on "Loading..." with no clue why. */
+window.addEventListener('error', ev => {
+  const box = document.getElementById('note');
+  const sel = document.getElementById('course');
+  if (sel && /Loading/.test(sel.textContent)) sel.innerHTML = '<option>Not loaded</option>';
+  if (box && !box.dataset.crashed) {
+    box.dataset.crashed = '1';
+    box.innerHTML = '<div class="msg bad">This page hit an error and stopped.' +
+      '<br><code>' + String(ev.message || ev.error || 'unknown') + '</code>' +
+      '<br><br>If you just updated, try a hard refresh (Ctrl+Shift+R).</div>';
+  }
+});
+
+const $ = id => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error('This build is missing the "' + id + '" element.');
+  return el;
+};
 const S = { courses: [], students: [], roster: [], marks: {},
             history: null, grades: null, entry: {},
             view: 'mark', picked: null, busy: false };
@@ -567,14 +588,16 @@ $('find').addEventListener('input', filter);
 $('allP').addEventListener('click', () => { S.roster.forEach(s => S.marks[s.roll]='P'); drawRoster(); });
 
 /* ---------- history --------------------------------------------------- */
-async function loadHistory() {
+async function loadHistory(quiet) {
   const c = course();
   if (!c) return;
-  $('list').innerHTML = '<li class="empty">Reading the sheet…</li>';
-  $('headline').textContent = '';
+  if (!quiet) {
+    $('list').innerHTML = '<li class="empty">Reading the sheet…</li>';
+    $('headline').textContent = '';
+  }
   try {
     const data = await get({ action: 'history', course: c.code, section: c.section });
-    if (!data.ok && data.code === 'PIN') { $('list').innerHTML = ''; return pinWall(data.error); }
+    if (!data.ok && data.code === 'PIN') { if (!quiet) $('list').innerHTML = ''; return pinWall(data.error); }
     if (!data.ok) throw new Error(data.error);
     S.history = data;
     const chosen = $('picksession').value;
