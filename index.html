@@ -4,10 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#12233d">
-<!-- Ask the browser to re-check this file every visit. GitHub Pages otherwise
-     lets Chrome hold a copy for ten minutes, which makes updates look broken. -->
-<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
 <title>Class attendance</title>
 
 <script>
@@ -19,7 +15,7 @@ const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uA
 
 /*  Bumped whenever this file changes. Shown in the header so you can tell
     at a glance whether the browser is serving the newest copy. */
-const BUILD = "2026-08-17d";
+const BUILD = "2026-08-17c";
 
 /*  Shown in the header — change to whatever you like. */
 const HEADER_TITLE = "Attendance";
@@ -396,9 +392,7 @@ const CODES = ['P','L','E','A'];
 const VIEWS = ['mark','term','class','student','marks','grades','roll'];
 
 $('ttl').textContent = HEADER_TITLE;
-$('sub').textContent = HEADER_SUB + '  \u00b7  ';
-$('sub').insertAdjacentHTML('beforeend',
-  '<a href="#" id="buildinfo" style="color:inherit">build ' + BUILD + '</a>');
+$('sub').textContent = HEADER_SUB + '  \u00b7  build ' + BUILD;
 $('date').value = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
 $('cls').innerHTML = Array.from({ length: CLASSES_PER_DAY },
   (_, i) => `<option value="${i+1}">Class ${i+1}</option>`).join('');
@@ -480,15 +474,6 @@ function pinWall(reason) {
 
 $('note').addEventListener('click', e => {
   if (e.target.closest('#repin')) { forget('pin'); note(''); load(); }
-});
-
-/* Tap the build stamp when something looks wrong: it reports what this copy is
-   and clears the saved PIN, which covers the two commonest causes. */
-$('buildinfo').addEventListener('click', ev => {
-  ev.preventDefault();
-  if (!confirm('Build ' + BUILD + '\n\nClear the saved PIN and reload?')) return;
-  forget('pin'); forget('course');
-  location.replace(location.pathname + '?v=' + Date.now());
 });
 
 /* ---------- load courses + students ---------------------------------- */
