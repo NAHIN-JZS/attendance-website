@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#12233d">
+<!-- Ask the browser to re-check this file every visit. GitHub Pages otherwise
+     lets Chrome hold a copy for ten minutes, which makes updates look broken. -->
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>Class attendance</title>
 
 <script>
@@ -15,7 +19,7 @@ const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uA
 
 /*  Bumped whenever this file changes. Shown in the header so you can tell
     at a glance whether the browser is serving the newest copy. */
-const BUILD = "2026-08-17c";
+const BUILD = "2026-08-23a";
 
 /*  Shown in the header — change to whatever you like. */
 const HEADER_TITLE = "Attendance";
@@ -142,6 +146,10 @@ li.srow[data-low="1"] .meter i{background:var(--a)}
 .score.full{border-color:#b9dfc9;background:var(--p-bg)}
 .score.zero{border-color:#eebfc8;background:var(--a-bg);color:var(--a)}
 .score.bad{border-color:var(--a);background:var(--a-bg)}
+.clr{flex-shrink:0;width:30px;height:30px;padding:0;font:inherit;font-size:17px;line-height:1;
+  border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--muted);
+  cursor:pointer}
+.clr:hover{background:var(--a-bg);border-color:#eebfc8;color:var(--a)}
 .outof{font-size:13px;color:var(--muted);flex-shrink:0;min-width:2.6em}
 .wrow{display:flex;align-items:center;gap:10px;padding:7px 0}
 .wrow input[type=text]{flex:1}
@@ -392,7 +400,9 @@ const CODES = ['P','L','E','A'];
 const VIEWS = ['mark','term','class','student','marks','grades','roll'];
 
 $('ttl').textContent = HEADER_TITLE;
-$('sub').textContent = HEADER_SUB + '  \u00b7  build ' + BUILD;
+$('sub').textContent = HEADER_SUB + '  \u00b7  ';
+$('sub').insertAdjacentHTML('beforeend',
+  '<a href="#" id="buildinfo" style="color:inherit">build ' + BUILD + '</a>');
 $('date').value = new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
 $('cls').innerHTML = Array.from({ length: CLASSES_PER_DAY },
   (_, i) => `<option value="${i+1}">Class ${i+1}</option>`).join('');
@@ -474,6 +484,15 @@ function pinWall(reason) {
 
 $('note').addEventListener('click', e => {
   if (e.target.closest('#repin')) { forget('pin'); note(''); load(); }
+});
+
+/* Tap the build stamp when something looks wrong: it reports what this copy is
+   and clears the saved PIN, which covers the two commonest causes. */
+$('buildinfo').addEventListener('click', ev => {
+  ev.preventDefault();
+  if (!confirm('Build ' + BUILD + '\n\nClear the saved PIN and reload?')) return;
+  forget('pin'); forget('course');
+  location.replace(location.pathname + '?v=' + Date.now());
 });
 
 /* ---------- load courses + students ---------------------------------- */
@@ -895,6 +914,16 @@ async function dropStudent(roll) {
 $('list').addEventListener('click', e => {
   if (e.target.closest('#mkdefault')) return makeDefaults();
 
+  const clr = e.target.closest('button[data-clear]');
+  if (clr) {
+    const box = clr.closest('li').querySelector('input.score');
+    box.value = '';
+    paintScores();
+    box.focus();
+    note('Cleared \u2014 press <b>Save marks</b> to remove it from the sheet.');
+    return;
+  }
+
   const drop = e.target.closest('button[data-drop]');
   if (drop) return dropStudent(drop.dataset.drop);
 
@@ -1045,6 +1074,8 @@ function drawEntry() {
              data-roll="${esc(s.roll)}" value="${v === undefined ? '' : v}"
              aria-label="Score for ${esc(s.roll)}, or A for absent">
       <span class="outof">/ ${max}</span>
+      <button class="clr" data-clear="${esc(s.roll)}"
+              aria-label="Clear the mark for ${esc(s.roll)}" title="Clear this mark">\u00d7</button>
     </li>`;
   }).join('');
 }
@@ -1179,6 +1210,24 @@ function paintScores() {
   });
 }
 $('list').addEventListener('input', e => { if (e.target.classList.contains('score')) paintScores(); });
+
+/** Enter walks down the column; Shift+Enter and the arrows walk back up. */
+$('list').addEventListener('keydown', e => {
+  const el = e.target;
+  if (!el.classList || !el.classList.contains('score')) return;
+
+  const step = e.key === 'Enter' ? (e.shiftKey ? -1 : 1)
+             : e.key === 'ArrowDown' ? 1
+             : e.key === 'ArrowUp' ? -1 : 0;
+  if (!step) return;
+  e.preventDefault();
+
+  const boxes = Array.from(document.querySelectorAll('#list input.score'));
+  const next = boxes[boxes.indexOf(el) + step];
+
+  if (next) { next.focus(); next.select(); }
+  else if (step > 0) $('savem').focus();   // past the last row, Enter reaches Save
+});
 
 $('delitem').addEventListener('click', async () => {
   const item = S.grades && S.grades.items.find(i => i.key === S.entry.key);
