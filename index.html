@@ -19,7 +19,7 @@ const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uA
 
 /*  Bumped whenever this file changes. Shown in the header so you can tell
     at a glance whether the browser is serving the newest copy. */
-const BUILD = "2026-08-23a";
+const BUILD = "2026-08-23d";
 
 /*  Shown in the header — change to whatever you like. */
 const HEADER_TITLE = "Attendance";
@@ -286,6 +286,13 @@ footer[hidden]{display:none}
           <input type="search" id="sfind" placeholder="Search a roll or name" autocomplete="off">
         </div>
       </div>
+      <div class="fields" id="daterow" hidden style="margin-top:10px;grid-template-columns:1fr auto">
+        <div>
+          <label for="sdate">Show one day only</label>
+          <input type="date" id="sdate">
+        </div>
+        <div style="align-self:end"><button class="ghost" id="sdateclear">All dates</button></div>
+      </div>
       <div class="tools" id="backrow" hidden>
         <button class="ghost" id="back">← All students</button>
       </div>
@@ -319,7 +326,7 @@ footer[hidden]{display:none}
       </div>
       <div class="tools" style="justify-content:space-between">
         <button class="ghost" id="fillabs">Absent that day → A</button>
-        <button class="ghost danger" id="delitem" hidden>Delete this item</button>
+        <button class="ghost danger" id="delitem" disabled>Delete this item</button>
       </div>
       <p style="margin:8px 0 0;font-size:13px;color:var(--muted);line-height:1.5">
         Type a number, or <b>A</b> for absent — an A is stored as 0. Leave a box
@@ -580,6 +587,7 @@ function render() {
   if (!S.history) return loadHistory();
   if (S.view === 'term') return drawTerm();
   if (S.view === 'class') return drawSession();
+  if (!S.grades) return loadGrades();     // the student view shows marks too
   return drawStudent();
 }
 
@@ -805,6 +813,7 @@ $('delsession').addEventListener('click', async () => {
 function drawStudent() {
   const h = S.history;
   $('backrow').hidden = !S.picked;
+  $('daterow').hidden = !S.picked;
 
   if (!h.sessions.length) {
     $('headline').textContent = '';
@@ -821,17 +830,136 @@ function drawStudent() {
       <span class="name">${esc(r.name)}<em>${r.P} present · ${r.L} late · ${r.E} early · ${r.A} absent · of ${r.held} classes</em></span>
       <span class="pct" style="color:${r.held && r.pct < PASS_MARK ? '#ff9db0' : '#8fe3b6'}">${r.held ? r.pct+'%' : '—'}</span>
     </div>`;
-  $('headline').innerHTML = r.held && r.pct < PASS_MARK
-    ? `<b style="color:var(--a)">Below the ${PASS_MARK}% mark.</b> Tap P / L / A to correct any class.`
-    : 'Every class recorded for this course. Tap P / L / A to correct one.';
+  const only = $('sdate').value;
+  $('headline').innerHTML = only
+    ? `Showing <b>${esc(prettyDate(only))}</b> only \u2014 press <b>All dates</b> for the whole term.`
+    : (r.held && r.pct < PASS_MARK
+        ? `<b style="color:var(--a)">Below the ${PASS_MARK}% mark.</b> Day by day, newest first. Attendance and marks are both editable here.`
+        : 'Day by day, newest first. Attendance and marks are both editable here.');
 
-  const rec = h.marks[r.roll] || {};
-  $('list').innerHTML = h.sessions.slice().reverse().map(s => `
-    <li data-s="${rec[s.key] || ''}">
-      <span class="when">${esc(prettyDate(s.date))}<em>Class ${esc(s.cls)}</em></span>
-      ${seg(r.roll, rec[s.key] || '', s.key)}
-    </li>`).join('');
+  if (S.grades && S.grades.components.length) {
+    const m = grade(r.roll);
+    $('banner').insertAdjacentHTML('beforeend',
+      '<p class="headline" style="margin-top:10px">Internal marks so far: <b>' +
+      round(m.earned) + '</b> of ' + round(m.assessed) +
+      (m.assessed < m.possible ? ' assessed, out of ' + round(m.possible) + ' for the course' : '') +
+      '</p>');
+  }
+
+  drawTimeline(r);
 }
+
+/**
+ * One student's term as a single day-by-day timeline: attendance for each
+ * class that day, then any assessed work dated that day, with their score.
+ */
+function drawTimeline(r) {
+  const h = S.history, g = S.grades;
+  const rec = h.marks[r.roll] || {};
+  const got = (g && g.scores[r.roll]) || {};
+  const only = $('sdate').value;
+
+  // Every date this student has anything on, newest first.
+  const dates = {};
+  h.sessions.forEach(s => dates[s.date] = true);
+  if (g) g.items.forEach(i => dates[i.date] = true);
+  let days = Object.keys(dates).sort().reverse();
+  if (only) days = days.filter(d => d === only);
+
+  if (!days.length) {
+    $('list').innerHTML = only
+      ? `<li class="empty">Nothing recorded for ${esc(prettyDate(only))}.<br>` +
+        `Neither a class nor an assessment fell on that day.</li>`
+      : '<li class="empty">Nothing recorded for this student yet.</li>';
+    return;
+  }
+
+  $('list').innerHTML = days.map(date => {
+    const classes = h.sessions.filter(s => s.date === date);
+    const work = g ? g.items.filter(i => i.date === date) : [];
+
+    const classRows = classes.map(s => `
+      <li data-s="${rec[s.key] || ''}">
+        <span class="when">Class ${esc(s.cls)}<em>attendance</em></span>
+        ${seg(r.roll, rec[s.key] || '', s.key)}
+      </li>`).join('');
+
+    const workRows = work.map(i => {
+      const v = got[i.key];
+      return `<li>
+        <span class="when">${esc(i.item)}<em>${esc(i.component)}</em></span>
+        <input class="score escore" type="text" inputmode="decimal" autocomplete="off"
+               data-key="${esc(i.key)}" value="${v === undefined ? '' : round(v)}"
+               aria-label="Score for ${esc(i.item)}, or A for absent">
+        <span class="outof">/ ${round(i.max)}</span>
+      </li>`;
+    }).join('');
+
+    return `<li class="grouphead">${esc(prettyDate(date))}</li>` + classRows + workRows;
+  }).join('');
+  paintScores();
+}
+
+/** Writes one student's score for one item as soon as the box loses focus. */
+async function editScore(el) {
+  const key = el.dataset.key, roll = S.picked;
+  const item = S.grades.items.find(i => i.key === key);
+  if (!item || !roll) return;
+
+  const p = readScore(el.value);
+  if (p.bad) {
+    note('That is neither a number nor A.', 'bad');
+    el.classList.add('bad');
+    return;
+  }
+
+  const scores = S.grades.scores[roll] || (S.grades.scores[roll] = {});
+  const before = scores[key];
+  const now = p.skip ? undefined : p.score;
+  if (before === now) return;                    // nothing actually changed
+
+  if (now === undefined) delete scores[key]; else scores[key] = now;
+  el.classList.add('busy');
+  note('');
+
+  const data = await post('setScore', Object.assign(where(), {
+    component: item.component, item: item.item, date: item.date, max: item.max,
+    roll, name: nameFor(roll), score: p.skip ? '' : p.score
+  }));
+  el.classList.remove('busy');
+
+  if (data.ok) {
+    refreshBanner();
+    note(now === undefined
+      ? 'Cleared \u2014 that item no longer counts for this student.'
+      : `Saved ${round(now)} of ${round(item.max)} for ${esc(item.item)}.`, 'good');
+  } else {
+    if (before === undefined) delete scores[key]; else scores[key] = before;
+    el.value = before === undefined ? '' : round(before);
+    paintScores();
+    note(esc(data.error || 'That change did not reach the sheet.'), 'bad');
+  }
+}
+
+/** Redraw just the banner figures, so the row you are editing keeps focus. */
+function refreshBanner() {
+  const r = summarise().find(x => x.roll === S.picked);
+  if (!r || !S.grades || !S.grades.components.length) return;
+  const m = grade(r.roll), p = $('banner').querySelector('p.headline');
+  if (p) p.innerHTML = 'Internal marks so far: <b>' + round(m.earned) + '</b> of ' +
+    round(m.assessed) + (m.assessed < m.possible
+      ? ' assessed, out of ' + round(m.possible) + ' for the course' : '');
+}
+
+$('list').addEventListener('change', e => {
+  if (e.target.classList && e.target.classList.contains('escore')) editScore(e.target);
+});
+
+$('sdate').addEventListener('change', () => { if (S.picked) drawStudent(); });
+$('sdateclear').addEventListener('click', () => {
+  $('sdate').value = '';
+  if (S.picked) drawStudent();
+});
 
 function drawStudentList() {
   $('banner').innerHTML = '';
@@ -1036,12 +1164,14 @@ function loadEntry() {
     $('mlabel').value = item.item;
     $('mmax').value = item.max;
     $('mdate').value = item.date;
-    $('delitem').hidden = false;
+    $('delitem').disabled = false;
+    $('delitem').title = 'Delete every score for ' + item.item;
   } else {
     S.entry = { key: null, isNew: true };
     $('mlabel').value = nextLabel(comp);
     $('mdate').value = new Date().toLocaleDateString('en-CA');
-    $('delitem').hidden = true;
+    $('delitem').disabled = true;
+    $('delitem').title = 'Pick a saved item in the Item list to delete it';
   }
   if (S.view === 'marks') drawEntry();
 }
@@ -1201,14 +1331,22 @@ function resetM() { $('savem').disabled = false; $('savem').textContent = 'Save 
 
 /** Green for full marks, red for a zero or an A, so the column reads at a glance. */
 function paintScores() {
-  const max = Number($('mmax').value) || 0;
+  const entry = Number($('mmax').value) || 0;
   document.querySelectorAll('#list input.score').forEach(el => {
     const p = readScore(el.value);
+    // In the timeline each row has its own maximum; in the entry grid one applies to all.
+    const max = el.classList.contains('escore')
+      ? maxFor(el.dataset.key) : entry;
     el.classList.toggle('full', !p.skip && !p.bad && max > 0 && p.score >= max);
     el.classList.toggle('zero', !p.skip && !p.bad && p.score === 0);
     el.classList.toggle('bad', !!p.bad);
   });
 }
+
+const maxFor = key => {
+  const i = S.grades && S.grades.items.find(x => x.key === key);
+  return i ? i.max : 0;
+};
 $('list').addEventListener('input', e => { if (e.target.classList.contains('score')) paintScores(); });
 
 /** Enter walks down the column; Shift+Enter and the arrows walk back up. */
@@ -1226,7 +1364,11 @@ $('list').addEventListener('keydown', e => {
   const next = boxes[boxes.indexOf(el) + step];
 
   if (next) { next.focus(); next.select(); }
-  else if (step > 0) $('savem').focus();   // past the last row, Enter reaches Save
+  else if (step > 0) {
+    // Leaving the last box commits it. Only the entry grid has a Save button.
+    el.blur();
+    if (S.view === 'marks') $('savem').focus();
+  }
 });
 
 $('delitem').addEventListener('click', async () => {
