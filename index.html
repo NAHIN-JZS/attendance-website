@@ -14,12 +14,17 @@
 /* ------------------------------------------------------------------ *
  *  PASTE YOUR APPS SCRIPT WEB APP URL BETWEEN THE QUOTES BELOW.
  *  It looks like: https://script.google.com/macros/s/AKfy..../exec
+ *
+ *  Or leave it EMPTY. The site then asks for the URL once per device and
+ *  keeps it in that browser, so the address never appears in your repo.
+ *  This is not a security measure on its own — anyone using the site can
+ *  still see the URL — but it keeps it off a public GitHub page.
  * ------------------------------------------------------------------ */
-const API = "https://script.google.com/macros/s/AKfycbwrBkHXc2CH3tiFCN4ZKHIn45uArzrxGAudgWbbSjqLN8PLckGSOqg4AwH2Mt2C7O-p/exec";
+const API_URL = "PASTE_YOUR_WEB_APP_URL_HERE";
 
 /*  Bumped whenever this file changes. Shown in the header so you can tell
     at a glance whether the browser is serving the newest copy. */
-const BUILD = "2026-08-23d";
+const BUILD = "2026-08-23f";
 
 /*  Shown in the header — change to whatever you like. */
 const HEADER_TITLE = "Attendance";
@@ -426,6 +431,17 @@ const nameFor  = roll => {
   return (s && s.name) || (S.history && S.history.names[roll]) || '';
 };
 
+/* The URL comes from the file when it is set there, otherwise from this
+   browser, asked for once. */
+let API = API_URL.indexOf('PASTE_') === 0 ? (recall('api') || '') : API_URL;
+
+function askForUrl() {
+  const v = (prompt('Paste your Apps Script web app URL (ends in /exec):') || '').trim();
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(v)) return false;
+  API = v; remember('api', v);
+  return true;
+}
+
 /* ---------- the PIN gates reading as well as writing ------------------ */
 /**
  * A blank saved PIN counts as no PIN. Earlier versions let you press OK on an
@@ -491,22 +507,28 @@ function pinWall(reason) {
 
 $('note').addEventListener('click', e => {
   if (e.target.closest('#repin')) { forget('pin'); note(''); load(); }
+  if (e.target.closest('#seturl') && askForUrl()) { note(''); load(); }
 });
 
 /* Tap the build stamp when something looks wrong: it reports what this copy is
    and clears the saved PIN, which covers the two commonest causes. */
 $('buildinfo').addEventListener('click', ev => {
   ev.preventDefault();
-  if (!confirm('Build ' + BUILD + '\n\nClear the saved PIN and reload?')) return;
+  const byBrowser = API_URL.indexOf('PASTE_') === 0;
+  if (!confirm('Build ' + BUILD +
+      (byBrowser ? '\nScript URL: saved in this browser' : '\nScript URL: set in the file') +
+      '\n\nForget the saved PIN' + (byBrowser ? ' and URL' : '') + ', and reload?')) return;
   forget('pin'); forget('course');
+  if (byBrowser) forget('api');
   location.replace(location.pathname + '?v=' + Date.now());
 });
 
 /* ---------- load courses + students ---------------------------------- */
 async function load(keepMarks) {
-  if (API.indexOf('PASTE_') === 0) {
-    note('Open <code>index.html</code> and paste your Apps Script web app URL into the <code>API</code> line near the top.', 'bad');
+  if (!API && !askForUrl()) {
     $('course').innerHTML = '<option>Not connected</option>';
+    note('This site needs your Apps Script web app URL.' +
+         '<br><br><button class="ghost" id="seturl">Enter the URL</button>', 'bad');
     return;
   }
   try {
