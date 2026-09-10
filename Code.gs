@@ -13,13 +13,31 @@
 var SHEET_STUDENTS = 'Students';
 var SHEET_COURSES = 'Courses';
 var SHEET_ATTENDANCE = 'Attendance';
+var SHEET_COMPONENTS = 'Components';
+var SHEET_MARKS = 'Marks';
 
 var ATTENDANCE_HEADERS = [
   'Saved at', 'Date', 'Class', 'Course code', 'Course title',
   'Section', 'Roll', 'Name', 'Status'
 ];
 
-var COL_STATUS = 9;   // column I
+var COMPONENT_HEADERS = ['Course code', 'Section', 'Component', 'Marks'];
+var MARKS_HEADERS = ['Saved at', 'Date', 'Course code', 'Section',
+                     'Component', 'Item', 'Max', 'Roll', 'Name', 'Score'];
+
+var COL_STATUS = 9;   // column I on Attendance
+var COL_SCORE = 10;   // column J on Marks
+
+/**
+ * Suggested starting components, as MARKS ALLOTTED rather than percentages.
+ * Editable from the site. The totals here follow the common 30 + 70 split for
+ * theory and 60 + 40 for sessional; change them to match your department.
+ */
+var DEFAULT_COMPONENTS = {
+  Sessional: [['Homework', 10], ['Lab task', 20], ['Lab report', 20], ['Class performance', 10]],
+  Theory:    [['Homework', 5], ['Assignment', 5], ['Spot test', 5],
+              ['Class test', 10], ['Class performance', 5]]
+};
 
 /* ================================================================== */
 /* Reading                                                            */
@@ -36,6 +54,9 @@ function doGet(e) {
 
     if (p.action === 'history') {
       return json(readHistory(ss, p.course, p.section));
+    }
+    if (p.action === 'marks') {
+      return json(readMarks(ss, p.course, p.section));
     }
     return json({
       ok: true,
@@ -63,25 +84,33 @@ function readStudents(ss) {
 }
 
 function readCourses(ss) {
-  var rows = readRows(ss, SHEET_COURSES);
+  var rows = readRows(ss, SHEET_COURSES, 4);
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     var code = String(rows[i][0]).trim();
     if (!code) continue;
+    var type = String(rows[i][3] || '').trim();
     out.push({
       code: code,
       title: String(rows[i][1] || '').trim(),
-      section: String(rows[i][2] || '').trim()
+      section: String(rows[i][2] || '').trim(),
+      type: type === 'Sessional' ? 'Sessional' : 'Theory'
     });
   }
   return out;
 }
 
-function readRows(ss, name) {
+function readRows(ss, name, width) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) throw new Error('Sheet "' + name + '" not found. Run setupSheets() once.');
   if (sheet.getLastRow() < 2) return [];
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  var want = width || 3;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1,
+                            Math.min(want, Math.max(1, sheet.getLastColumn()))).getValues();
+  for (var i = 0; i < rows.length; i++) {          // pad short rows
+    while (rows[i].length < want) rows[i].push('');
+  }
+  return rows;
 }
 
 /**
@@ -101,7 +130,7 @@ function readHistory(ss, courseCode, section) {
   }
 
   var values = sheet.getRange(2, 2, sheet.getLastRow() - 1, 8).getValues(); // Date..Status
-  var short = { Present: 'P', Late: 'L', Absent: 'A' };
+  var short = { Present: 'P', Late: 'L', 'Early leave': 'E', Absent: 'A' };
   var seen = {}, sessions = [], marks = {}, names = {};
 
   for (var i = 0; i < values.length; i++) {
@@ -126,6 +155,61 @@ function readHistory(ss, courseCode, section) {
   });
 
   return { ok: true, sessions: sessions, marks: marks, names: names };
+}
+
+/**
+ * Components and marks for one course + section.
+ *
+ * An "item" is one piece of assessed work: a component plus a label, so
+ * Homework 1 and Homework 2 stay separate inside the Homework component.
+ *
+ *   components  [{ name:'Homework', weight:15 }, ...]
+ *   items       [{ key:'Homework#HW 1', component, item, date, max }, ...]
+ *   scores      { '210101': { 'Homework#HW 1': 8 }, ... }
+ */
+function readMarks(ss, courseCode, section) {
+  var components = [];
+  var rows = readRows(ss, SHEET_COMPONENTS, 4);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]).trim() !== courseCode) continue;
+    if (String(rows[i][1]).trim() !== section) continue;
+    var name = String(rows[i][2]).trim();
+    if (!name) continue;
+    components.push({ name: name, marks: Number(rows[i][3]) || 0 });
+  }
+
+  var sheet = ss.getSheetByName(SHEET_MARKS);
+  var seen = {}, items = [], scores = {}, names = {};
+
+  if (sheet && sheet.getLastRow() >= 2) {
+    var values = sheet.getRange(2, 2, sheet.getLastRow() - 1, 9).getValues(); // Date..Score
+    for (var j = 0; j < values.length; j++) {
+      var r = values[j];
+      if (String(r[1]).trim() !== courseCode) continue;
+      if (String(r[2]).trim() !== section) continue;
+
+      var comp = String(r[3]).trim();
+      var item = String(r[4]).trim();
+      var roll = String(r[6]).trim();
+      if (!comp || !item || !roll) continue;
+
+      var key = comp + '#' + item;
+      if (!seen[key]) {
+        seen[key] = true;
+        items.push({ key: key, component: comp, item: item,
+                     date: asDateString(r[0]), max: Number(r[5]) || 0 });
+      }
+      names[roll] = String(r[7] || '').trim();
+      if (!scores[roll]) scores[roll] = {};
+      if (r[8] !== '' && r[8] !== null) scores[roll][key] = Number(r[8]);
+    }
+  }
+
+  items.sort(function (a, b) {
+    return a.date === b.date ? (a.key < b.key ? -1 : 1) : (a.date < b.date ? -1 : 1);
+  });
+
+  return { ok: true, components: components, items: items, scores: scores, names: names };
 }
 
 /** Rows written before the Class column existed count as class 1. */
@@ -160,6 +244,10 @@ function doPost(e) {
       case 'save':          return json(saveSession(ss, body));
       case 'deleteSession': return json(deleteSession(ss, body));
       case 'setMark':       return json(setMark(ss, body));
+      case 'saveComponents':return json(saveComponents(ss, body));
+      case 'saveItem':      return json(saveItem(ss, body));
+      case 'setScore':      return json(setScore(ss, body));
+      case 'deleteItem':    return json(deleteItem(ss, body));
       case 'addStudent':    return json(addStudent(ss, body));
       case 'removeStudent': return json(removeStudent(ss, body));
       default: return json({ ok: false, error: 'Unknown action: ' + body.action });
@@ -234,6 +322,130 @@ function setMark(ss, body) {
   return { ok: true, added: 1 };
 }
 
+/* ---- components and their weights ---------------------------------- */
+
+/** Replaces the whole component list for one course + section. */
+function saveComponents(ss, body) {
+  var sheet = ss.getSheetByName(SHEET_COMPONENTS);
+  if (!sheet) throw new Error('Sheet "Components" not found. Run setupSheets() once.');
+
+  var hits = [];
+  if (sheet.getLastRow() >= 2) {
+    var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]).trim() === body.courseCode &&
+          String(rows[i][1]).trim() === body.section) hits.push(i + 2);
+    }
+  }
+  deleteRows(sheet, hits);
+
+  var out = (body.components || []).filter(function (c) { return String(c.name || '').trim(); })
+    .map(function (c) {
+      var allotted = c.marks === undefined ? c.weight : c.marks;   // old payloads said weight
+      return [body.courseCode, body.section, String(c.name).trim(), Number(allotted) || 0];
+    });
+
+  if (out.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, out.length, COMPONENT_HEADERS.length).setValues(out);
+  }
+  return { ok: true, saved: out.length };
+}
+
+/* ---- marks for one item -------------------------------------------- */
+
+/** Replaces every score for one component + item. Blank scores are not stored. */
+function saveItem(ss, body) {
+  var sheet = ss.getSheetByName(SHEET_MARKS);
+  if (!sheet) throw new Error('Sheet "Marks" not found. Run setupSheets() once.');
+
+  var comp = String(body.component || '').trim();
+  var item = String(body.item || '').trim();
+  if (!comp || !item) return { ok: false, error: 'A component and an item name are both needed.' };
+
+  var hits = findItemRows(sheet, body.courseCode, body.section, comp, item);
+  if (hits.length && !body.overwrite && body.isNew) {
+    return { ok: false, code: 'ALREADY_SAVED', count: hits.length };
+  }
+  deleteRows(sheet, hits);
+
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  var max = Number(body.max) || 0;
+  var out = (body.records || [])
+    .filter(function (r) { return r.score !== '' && r.score !== null && r.score !== undefined; })
+    .map(function (r) {
+      return [stamp, body.date, body.courseCode, body.section, comp, item, max,
+              String(r.roll), r.name || '', Number(r.score)];
+    });
+
+  if (out.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, out.length, MARKS_HEADERS.length).setValues(out);
+  }
+  return { ok: true, saved: out.length, replaced: hits.length };
+}
+
+/**
+ * Change one student's score for one item, without touching anybody else.
+ * A blank score deletes their row, which excuses them from that item rather
+ * than scoring it zero.
+ */
+function setScore(ss, body) {
+  var sheet = ss.getSheetByName(SHEET_MARKS);
+  if (!sheet) throw new Error('Sheet "Marks" not found. Run setupSheets() once.');
+
+  var comp = String(body.component || '').trim();
+  var item = String(body.item || '').trim();
+  var roll = String(body.roll || '').trim();
+  if (!comp || !item || !roll) return { ok: false, error: 'Missing component, item or roll.' };
+
+  var blank = body.score === '' || body.score === null || body.score === undefined;
+
+  if (sheet.getLastRow() >= 2) {
+    var values = sheet.getRange(2, 3, sheet.getLastRow() - 1, 6).getValues(); // Course..Roll
+    for (var i = 0; i < values.length; i++) {
+      if (String(values[i][0]).trim() === body.courseCode &&
+          String(values[i][1]).trim() === body.section &&
+          String(values[i][2]).trim() === comp &&
+          String(values[i][3]).trim() === item &&
+          String(values[i][5]).trim() === roll) {
+        if (blank) { sheet.deleteRow(i + 2); return { ok: true, cleared: 1 }; }
+        sheet.getRange(i + 2, COL_SCORE).setValue(Number(body.score));
+        return { ok: true, updated: 1 };
+      }
+    }
+  }
+
+  if (blank) return { ok: true, cleared: 0 };   // nothing there to clear
+
+  // No row yet — this student was not marked when the item was saved.
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  sheet.appendRow([stamp, body.date, body.courseCode, body.section, comp, item,
+                   Number(body.max) || 0, roll, body.name || '', Number(body.score)]);
+  return { ok: true, added: 1 };
+}
+
+function deleteItem(ss, body) {
+  var sheet = ss.getSheetByName(SHEET_MARKS);
+  if (!sheet) throw new Error('Sheet "Marks" not found. Run setupSheets() once.');
+  var hits = findItemRows(sheet, body.courseCode, body.section,
+                          String(body.component).trim(), String(body.item).trim());
+  if (!hits.length) return { ok: false, error: 'That item is no longer in the sheet.' };
+  deleteRows(sheet, hits);
+  return { ok: true, deleted: hits.length };
+}
+
+function findItemRows(sheet, courseCode, section, component, item) {
+  if (sheet.getLastRow() < 2) return [];
+  var values = sheet.getRange(2, 3, sheet.getLastRow() - 1, 4).getValues(); // Course..Item
+  var hits = [];
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0]).trim() === courseCode &&
+        String(values[i][1]).trim() === section &&
+        String(values[i][2]).trim() === component &&
+        String(values[i][3]).trim() === item) hits.push(i + 2);
+  }
+  return hits;
+}
+
 /* ---- the roll ----------------------------------------------------- */
 
 function addStudent(ss, body) {
@@ -279,16 +491,22 @@ function removeStudent(ss, body) {
   return { ok: true, removed: removed, purged: purged };
 }
 
-/** Delete every attendance row for one student in one section. */
+/** Delete every attendance row and every mark for one student in one section. */
 function purgeRecords(ss, roll, section) {
-  var sheet = attendanceSheet(ss);
+  var gone = wipe(attendanceSheet(ss), 6, 7, section, roll);          // Section, Roll
+  var marks = ss.getSheetByName(SHEET_MARKS);
+  if (marks) gone += wipe(marks, 4, 8, section, roll);                // Section, Roll
+  return gone;
+}
+
+function wipe(sheet, sectionCol, rollCol, section, roll) {
   if (sheet.getLastRow() < 2) return 0;
-  var values = sheet.getRange(2, 6, sheet.getLastRow() - 1, 2).getValues(); // Section, Roll
+  var span = rollCol - sectionCol + 1;
+  var values = sheet.getRange(2, sectionCol, sheet.getLastRow() - 1, span).getValues();
   var hits = [];
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0]).trim() === section && String(values[i][1]).trim() === roll) {
-      hits.push(i + 2);
-    }
+    if (String(values[i][0]).trim() === section &&
+        String(values[i][span - 1]).trim() === roll) hits.push(i + 2);
   }
   deleteRows(sheet, hits);
   return hits.length;
@@ -347,14 +565,64 @@ function deleteRows(sheet, rowNumbers) {
  * version treated "no PIN configured" as "open to everyone", which meant a
  * forgotten setup step silently published the whole sheet.
  */
+var MAX_TRIES = 10;        // wrong PINs allowed before a pause
+var LOCK_SECONDS = 300;    // how long that pause lasts
+
+/**
+ * Returns null when the PIN is good, otherwise the reason it is not.
+ *
+ * Fails CLOSED: with no PIN stored, nothing is served at all.
+ *
+ * Because the web app URL is necessarily public, the PIN is the only thing
+ * standing between a stranger and the sheet. So repeated wrong answers pause
+ * the script for everyone for a few minutes, which turns guessing from
+ * "thousands of tries an hour" into something not worth attempting.
+ */
 function pinCheck(pin) {
   var stored = PropertiesService.getScriptProperties().getProperty('PIN');
-  if (!stored) return 'No PIN is set on this script. Run setPin() in the Apps Script editor.';
-  if (String(pin || '') !== stored) return 'That PIN is not correct.';
+  if (!stored) return 'No PIN is set on this script. Run makePin() in the Apps Script editor.';
+
+  var cache = CacheService.getScriptCache();
+  var fails = Number(cache.get('pinFails') || 0);
+  if (fails >= MAX_TRIES) {
+    return 'Too many wrong PINs. This will unlock itself in a few minutes.';
+  }
+
+  if (String(pin || '') !== stored) {
+    cache.put('pinFails', String(fails + 1), LOCK_SECONDS);
+    var left = MAX_TRIES - fails - 1;
+    return 'That PIN is not correct.' +
+           (left <= 3 ? ' ' + left + ' attempt' + (left === 1 ? '' : 's') + ' left before a pause.' : '');
+  }
+
+  if (fails) cache.remove('pinFails');
   return null;
 }
 
-/** Edit the value, run this once, then change the value back. */
+/**
+ * BEST WAY TO SET A PIN. Run this once, then read the execution log: it prints
+ * a strong random passphrase and stores it. Because you never type it into the
+ * code, it can never end up in your GitHub repo or its history.
+ *
+ * Run it again any time to rotate the PIN, which is what to do if you ever
+ * think it has leaked.
+ */
+function makePin() {
+  var words = 'amber,anchor,basil,cedar,delta,ember,falcon,garnet,harbor,indigo,jasper,kettle,' +
+              'lantern,marble,nimbus,onyx,pepper,quartz,rowan,saffron,timber,umber,violet,willow';
+  var list = words.split(',');
+  var pick = [];
+  for (var i = 0; i < 4; i++) {
+    pick.push(list[Math.floor(Math.random() * list.length)]);
+  }
+  var pin = pick.join('-') + '-' + Math.floor(Math.random() * 9000 + 1000);
+  PropertiesService.getScriptProperties().setProperty('PIN', pin);
+  Logger.log('Your new PIN is:\n\n    ' + pin +
+             '\n\nType it into the site once per device. Nothing else to do.');
+  return pin;
+}
+
+/** Set a PIN of your own instead. Edit the value, run once, then change it back. */
 function setPin() {
   PropertiesService.getScriptProperties().setProperty('PIN', '1234');
 }
@@ -365,6 +633,12 @@ function checkPinIsSet() {
   Logger.log(stored ? 'PIN is set (' + stored.length + ' characters).' : 'NO PIN IS SET.');
 }
 
+/** Clears a lockout early, if you locked yourself out by mistyping. */
+function unlockNow() {
+  CacheService.getScriptCache().remove('pinFails');
+  Logger.log('Lockout cleared.');
+}
+
 /* ================================================================== */
 /* Setup and upgrade                                                  */
 /* ================================================================== */
@@ -372,8 +646,10 @@ function checkPinIsSet() {
 function setupSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   ensure(ss, SHEET_STUDENTS, ['Roll', 'Name', 'Section']);
-  ensure(ss, SHEET_COURSES, ['Code', 'Title', 'Section']);
+  ensure(ss, SHEET_COURSES, ['Code', 'Title', 'Section', 'Type']);
   ensure(ss, SHEET_ATTENDANCE, ATTENDANCE_HEADERS);
+  ensure(ss, SHEET_COMPONENTS, COMPONENT_HEADERS);
+  ensure(ss, SHEET_MARKS, MARKS_HEADERS);
   upgradeSheet();
 }
 
@@ -392,20 +668,51 @@ function ensure(ss, name, headers) {
  * existing row as class 1.
  */
 function upgradeSheet() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_ATTENDANCE);
-  if (!sheet) throw new Error('Sheet "Attendance" not found. Run setupSheets() first.');
-  if (String(sheet.getRange(1, 3).getValue()).trim() === 'Class') return 'Already up to date.';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var done = [];
 
-  sheet.insertColumnBefore(3);
-  sheet.getRange(1, 3).setValue('Class').setFontWeight('bold').setBackground('#eef1f6');
+  // Components and Marks arrived with internal marks.
+  ensure(ss, SHEET_COMPONENTS, COMPONENT_HEADERS);
+  ensure(ss, SHEET_MARKS, MARKS_HEADERS);
 
-  var rows = sheet.getLastRow() - 1;
-  if (rows > 0) {
-    var fill = [];
-    for (var i = 0; i < rows; i++) fill.push(['1']);
-    sheet.getRange(2, 3, rows, 1).setValues(fill);
+  // The Components column was called Weight before marks became raw scores.
+  var comps = ss.getSheetByName(SHEET_COMPONENTS);
+  if (comps && String(comps.getRange(1, 4).getValue()).trim() === 'Weight') {
+    comps.getRange(1, 4).setValue('Marks');
+    done.push('renamed the Components "Weight" column to "Marks"');
   }
-  return 'Added the Class column to ' + rows + ' rows.';
+
+  // Courses gained a Type column (Theory or Sessional).
+  var courses = ss.getSheetByName(SHEET_COURSES);
+  if (courses && String(courses.getRange(1, 4).getValue()).trim() !== 'Type') {
+    courses.getRange(1, 4).setValue('Type').setFontWeight('bold').setBackground('#eef1f6');
+    done.push('added the Type column to Courses (blank means Theory)');
+  }
+
+  // Attendance gained a Class column when multiple classes per day arrived.
+  var sheet = ss.getSheetByName(SHEET_ATTENDANCE);
+  if (!sheet) throw new Error('Sheet "Attendance" not found. Run setupSheets() first.');
+  if (String(sheet.getRange(1, 3).getValue()).trim() !== 'Class') {
+    sheet.insertColumnBefore(3);
+    sheet.getRange(1, 3).setValue('Class').setFontWeight('bold').setBackground('#eef1f6');
+    var rows = sheet.getLastRow() - 1;
+    if (rows > 0) {
+      var fill = [];
+      for (var i = 0; i < rows; i++) fill.push(['1']);
+      sheet.getRange(2, 3, rows, 1).setValues(fill);
+    }
+    done.push('added the Class column to ' + rows + ' attendance rows');
+  }
+
+  return done.length ? 'Upgraded: ' + done.join('; ') + '.' : 'Already up to date.';
+}
+
+/**
+ * Fills in a starting set of components for one course, based on its Type.
+ * The site offers this as a button; you can also run it by hand.
+ */
+function defaultComponentsFor(type) {
+  return DEFAULT_COMPONENTS[type === 'Sessional' ? 'Sessional' : 'Theory'];
 }
 
 /* ================================================================== */
